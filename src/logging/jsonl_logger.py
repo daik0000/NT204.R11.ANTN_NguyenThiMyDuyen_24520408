@@ -36,10 +36,10 @@ class JSONLLogger:
         except PermissionError:
             print(f"[CRITICAL] Permission denied: Cannot write to '{self.file_path}'. "
                   f"Please check folder permissions or run with elevated privileges.")
-            sys.exit(1)
+            raise
         except OSError as e:
             print(f"[CRITICAL] OS Error initializing logger at '{self.file_path}': {e}")
-            sys.exit(1)
+            raise
 
     def log_event(self, event: IDSEvent) -> None:
         """
