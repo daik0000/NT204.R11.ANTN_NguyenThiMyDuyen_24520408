@@ -1,5 +1,6 @@
 ports:
   80: HTTP
   53: DNS
+  443: HTTPS
   25: SMTP
   587: SMTP
