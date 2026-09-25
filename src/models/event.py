@@ -40,6 +40,9 @@ class IDSEvent:
     raw_length: int = 0
     payload_length: int = 0
     status: Status = "OK"
+    
+    # Optional error information for malformed packets or parsing issues
+    error_info: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """
