@@ -19,12 +19,12 @@ Bài tập đầu tiên (module này) xây dựng tầng **Packet Capture & Pars
 - [x] Khởi tạo project, cấu trúc thư mục (Issue #1)
 - [x] Chuẩn hóa schema dữ liệu sự kiện (`IDSEvent`) và JSON Lines logger (Issue #3)
 - [x] Thu thập packet — live capture + PCAP import (Issue #4)
-- [ ] Parser tầng Network & Transport — IPv4, TCP, UDP 
+- [x] Parser tầng Network & Transport — IPv4, TCP, UDP (Issue #9)
 - [ ] Nhận diện & parser tầng Application — HTTP, DNS, SMTP 
 - [ ] Tích hợp pipeline hoàn chỉnh 
 - [ ] Chạy đủ các test case bắt buộc 
 
-> Ở giai đoạn này, `main.py` đã chạy được và in số lượng gói tin thu thập ra log (chưa parse nội dung packet). 
+> Ở giai đoạn này, các parser tầng Network (IPv4) và Transport (TCP/UDP) đã hoạt động độc lập và có thể test riêng lẻ (mỗi file có smoke test ở `if __name__ == "__main__"`), nhưng **chưa được nối vào `main.py`** - pipeline hoàn chỉnh (capture -> network -> transport -> application -> log) sẽ được ghép ở giai đoạn sau. Hiện tại `main.py` vẫn chỉ đếm packet thu thập được, chưa gọi các parser này
 
 ## Cách chạy
 
@@ -77,6 +77,8 @@ Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòn
 
 Đây là format dữ liệu duy nhất mà các module phía sau được phép sử dụng - không truy cập trực tiếp object của thư viện capture (Scapy). Kết quả được ghi liên tục ra file JSON Lines (mặc định `output/events.jsonl`) qua `src/logging/jsonl_logger.py`.
 
+Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src/utils/safe.py`) - bắt mọi lỗi phát sinh khi gặp packet dị dạng/thiếu header/payload quá ngắn, trả về `status="MALFORMED"` kèm `error_info` thay vì làm crash toàn bộ chương trình.
+
 ## Cấu trúc thư mục
 
 ```
@@ -93,6 +95,14 @@ Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòn
 │   ├── capture/
 │   │   ├── pcap_reader.py     # Đọc file PCAP theo generator, trả về (timestamp, raw_bytes)
 │   │   └── live_capture.py    # Bắt live traffic qua producer-consumer queue, trả về (timestamp, raw_bytes)
+│   ├── parsers/
+│   │   ├── network/
+│   │   │   └── ipv4_parser.py     # Decode raw bytes -> IPv4 fields (đây là nơi duy nhất tạo/hủy object Scapy)
+│   │   ├── transport/
+│   │   │   ├── tcp_parser.py      # Decode TCP segment: ports, flags, seq/ack, window
+│   │   │   └── udp_parser.py
+│   └── utils/
+│       └── safe.py            # Decorator @safe_parse — bắt lỗi chung cho mọi parser, trả status="MALFORMED"
 ├── config/ # File cấu hình module (mapping port cho từng application protocol, policy xử lý protocol không xác định...), tách riêng khỏi code.
 └── TEST/ # Kết quả các test case bắt buộc: input dùng để test, output thực tế, và ghi chú đánh giá pass/fail cho từng test case.
 ```
