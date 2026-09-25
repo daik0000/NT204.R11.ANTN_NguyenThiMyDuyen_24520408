@@ -75,7 +75,13 @@ def capture_live(interface: Optional[str] = None, bpf_filter: str = "") -> Itera
                 # This ensures the generator can exit cleanly even if the sniffing thread terminates unexpectedly.
                 packet_queue.put_nowait(None)
             except queue.Full:
-                pass
+                try:
+                    packet_queue.get_nowait()
+                    packet_queue.put_nowait(None)
+                except queue.Empty:
+                    logger.warning("Packet queue became empty before sending stop signal.")
+                except queue.Full:
+                    logger.warning("Packet queue is full. Failed to enqueue stop signal.")
 
     # Start the background sniffing thread
     sniffer_thread = threading.Thread(target=_start_sniffing, daemon=True)
