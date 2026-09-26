@@ -20,11 +20,11 @@ Bài tập đầu tiên (module này) xây dựng tầng **Packet Capture & Pars
 - [x] Chuẩn hóa schema dữ liệu sự kiện (`IDSEvent`) và JSON Lines logger (Issue #3)
 - [x] Thu thập packet — live capture + PCAP import (Issue #4)
 - [x] Parser tầng Network & Transport — IPv4, TCP, UDP (Issue #9)
-- [ ] Nhận diện & parser tầng Application — HTTP, DNS, SMTP 
-- [ ] Tích hợp pipeline hoàn chỉnh 
+- [x] Nhận diện & parser tầng Application — HTTP, DNS, SMTP (Issue #11)
+- [x] Tích hợp pipeline hoàn chỉnh (Issue #13)
 - [ ] Chạy đủ các test case bắt buộc 
 
-> Ở giai đoạn này, các parser tầng Network (IPv4) và Transport (TCP/UDP) đã hoạt động độc lập và có thể test riêng lẻ (mỗi file có smoke test ở `if __name__ == "__main__"`), nhưng **chưa được nối vào `main.py`** - pipeline hoàn chỉnh (capture -> network -> transport -> application -> log) sẽ được ghép ở giai đoạn sau. Hiện tại `main.py` vẫn chỉ đếm packet thu thập được, chưa gọi các parser này
+> Pipeline đã chạy end-to-end: `main.py`  -> capture (live/pcap)  -> network  -> transport  -> detector  -> application  -> chuẩn hóa `IDSEvent`  -> ghi ra `output/events.jsonl`. Bước tiếp theo (Issue #7) là chạy và lưu bằng chứng cho 12 test case bắt buộc của đề bài vào `TEST/`.
 
 ## Cách chạy
 
@@ -54,6 +54,14 @@ python main.py --pcap test.pcap
 
 > Lưu ý: live capture cần quyền root (hoặc cấp quyền `cap_net_raw` cho Python) để có thể mở interface ở chế độ bắt gói tin trực tiếp. Nhấn `Ctrl+C` để dừng chế độ `--interface`.
 
+### Kết quả output
+
+Mỗi packet sau khi qua pipeline được ghi thành 1 dòng JSON vào **`output/events.jsonl`** (đường dẫn mặc định, tạo tự động nếu chưa tồn tại; tính tương đối theo thư mục chạy lệnh — luôn chạy `main.py` từ thư mục gốc repo). Ngoài ra chương trình cũng in log tóm tắt ra console theo thời gian thực (packet OK định kỳ mỗi 100 gói, packet `MALFORMED`/`UNKNOWN`/`IGNORED` được log riêng).
+
+Cấu hình `config/settings.yaml` gồm:
+- `ports`: mapping port  -> tên application protocol dùng cho detector port-based.
+- `unknown_policy` (`log` hoặc `skip`): quyết định hành vi khi không nhận diện được application protocol nào — `log` vẫn ghi event ra JSONL với `app_protocol="UNKNOWN"`; `skip` đặt `status="IGNORED"` và không ghi ra file (chỉ áp dụng cho tầng Application, không ảnh hưởng packet non-IPv4 ở tầng Network).
+
 ### Tối ưu buffer OS cho live capture
 
 Khi capture traffic thật với tốc độ cao, buffer socket mặc định của Linux có thể không đủ lớn, dẫn đến mất gói tin (packet loss) ở tầng kernel trước khi packet kịp lên tới Python. Có thể tăng buffer bằng:
@@ -73,7 +81,7 @@ Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòn
 - **Network layer**: `src_ip`, `dst_ip`, `network_protocol`, `network_fields` (chi tiết riêng của IPv4 như `ttl`, `header_length`)
 - **Transport layer**: `src_port`, `dst_port`, `transport_protocol`, `transport_fields` (với TCP: `flags`, `seq`, `ack`, `window`; với UDP: `length`)
 - **Application layer**: `app_protocol`, `detection_method` (`port`/`payload`/`port+payload`), `app_fields` (chi tiết riêng theo từng giao thức HTTP/DNS/SMTP)
-- **Metadata**: `raw_length`, `payload_length`, `status` (`OK`/`UNKNOWN`/`MALFORMED`)
+- **Metadata**: `raw_length`, `payload_length`, `status` (`OK`/`UNKNOWN`/`MALFORMED`/`IGNORED`), `error_info` (chi tiết lỗi khi `status="MALFORMED"`, gồm `layer` và `detail`; luôn `None` khi `status="IGNORED"` vì đây không phải lỗi, chỉ là packet bị bỏ qua có chủ ý theo `unknown_policy`)
 
 Đây là format dữ liệu duy nhất mà các module phía sau được phép sử dụng - không truy cập trực tiếp object của thư viện capture (Scapy). Kết quả được ghi liên tục ra file JSON Lines (mặc định `output/events.jsonl`) qua `src/logging/jsonl_logger.py`.
 
@@ -101,10 +109,24 @@ Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src
 │   │   ├── transport/
 │   │   │   ├── tcp_parser.py      # Decode TCP segment: ports, flags, seq/ack, window
 │   │   │   └── udp_parser.py
+│   │   └── application/
+│   │       ├── detector.py        # Nhận diện app protocol: port-based + payload signature, trả kèm detection_method
+│   │       ├── http_parser.py     # Decode HTTP request/response: method, path, status_code, headers, body preview
+│   │       ├── dns_parser.py      # Decode DNS query/response qua scapy.layers.dns: queries, answers
+│   │       └── smtp_parser.py     # Decode SMTP command/response theo dòng: multi-line, pipelining
+│   ├── pipeline/
+│   │   └── pipeline.py         # process_packet() — orchestrate network  -> transport  -> detector  -> application  -> IDSEvent
 │   └── utils/
 │       └── safe.py            # Decorator @safe_parse — bắt lỗi chung cho mọi parser, trả status="MALFORMED"
-├── config/ # File cấu hình module (mapping port cho từng application protocol, policy xử lý protocol không xác định...), tách riêng khỏi code.
+├── config/
+│   └── settings.yaml    # Mapping port cho từng application protocol, policy xử lý protocol không xác định
 └── TEST/ # Kết quả các test case bắt buộc: input dùng để test, output thực tế, và ghi chú đánh giá pass/fail cho từng test case.
 ```
 
 Cấu trúc này được thiết kế để mở rộng cho các bài tập tiếp theo trong cùng repo: mỗi module IDS mới (feature extraction, phát hiện port scan, cảnh báo...) sẽ được thêm vào như một thành phần song song trong `src/`, dùng chung schema `IDSEvent` mà module này tạo ra.
+
+## AI usage disclosure
+
+Trong quá trình phát triển module này, Claude Sonnet 5 (Anthropic) được sử dụng với vai trò **review code và đưa ra gợi ý chỉnh sửa** cho từng commit trước khi đưa lên repo - không viết thay toàn bộ code. Phần lớn code nộp bài do người thực hiện tự viết; Claude chỉ đọc lại, chỉ ra lỗi/rủi ro tiềm ẩn (ví dụ: sai lệch so với schema đã chốt, race condition, dữ liệu bị parse sai âm thầm) và đề xuất hướng sửa, việc quyết định áp dụng sửa nào do người thực hiện tự cân nhắc.
+
+Khi mở Pull Request, GitHub Copilot đóng vai trò reviewer tự động - các comment của Copilot mang tính tham khảo, không tự động áp dụng thay đổi vào code.
