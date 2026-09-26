@@ -45,12 +45,16 @@ def main():
                 packet_count += 1
 
                 event = process_packet(timestamp, raw_bytes, packet_count)
-                logger_jsonl.log_event(event)
+
+                if event.status != "IGNORED":
+                    logger_jsonl.log_event(event)
 
                 if event.status == "MALFORMED":
                     logger.warning("Packet #%d MALFORMED: %s", event.packet_id, event.error_info)
                 elif event.status == "UNKNOWN":
                     logger.debug("Packet #%d UNKNOWN (Non-IPv4/Ignored)", event.packet_id)
+                elif event.status == "IGNORED":
+                    logger.debug("Packet #%d IGNORED (Unknown Application Protocol)", event.packet_id)
                 elif packet_count % 100 == 0:
                     logger.info("Captured and processed %d packets...", packet_count)
 

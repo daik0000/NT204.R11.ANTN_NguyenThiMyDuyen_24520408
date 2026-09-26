@@ -17,6 +17,21 @@ IP_PROTO_TO_NAME = {
     17: "UDP"
 }
 
+def load_unknown_policy(config_path: str = "config/settings.yaml") -> str:
+    try:
+        path = Path(config_path)
+        if not path.is_file():
+            logger.debug("Config file %s not found. Using default policy: 'log'", config_path)
+            return "log"
+        with open(path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        return str(config.get("unknown_policy", "log")).lower()
+    except Exception as e:
+        logger.warning("Failed to read unknown_policy from %s: %s. Using default: 'log'", config_path, e)
+        return "log"
+        
+UNKNOWN_POLICY = load_unknown_policy()
+
 def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
     """
     Orchestrates the packet analysis pipeline from L3 up to L7.
@@ -98,11 +113,18 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
         dst_port=event_dict["dst_port"]
     )
     
-    event_dict["app_protocol"] = app_proto if app_proto != "UNKNOWN" else None
-    event_dict["detection_method"] = det_method
-
     if app_proto == "UNKNOWN":
+        if UNKNOWN_POLICY == "skip":
+            event_dict["status"] = "IGNORED"
+            # Do not set error_info since this is not an error; keep it as None
+        else:
+            event_dict["app_protocol"] = None
+            event_dict["detection_method"] = det_method
         return IDSEvent(**event_dict)
+
+    # If detection succeeds
+    event_dict["app_protocol"] = app_proto
+    event_dict["detection_method"] = det_method
 
     # 4. APPLICATION LAYER
     app_result = None

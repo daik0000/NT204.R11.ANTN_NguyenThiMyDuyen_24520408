@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Any, Literal
 
 # Defining sets of values ​​helps the type checker and IDE catch errors
-Status = Literal["OK", "UNKNOWN", "MALFORMED"]
+Status = Literal["OK", "UNKNOWN", "MALFORMED", "IGNORED"]
 DetectionMethod = Literal["port", "payload", "port+payload"]
 NetworkProtocol = Literal["IPv4", "IPv6"]
 TransportProtocol = Literal["TCP", "UDP", "ICMP"]
@@ -11,8 +11,12 @@ TransportProtocol = Literal["TCP", "UDP", "ICMP"]
 @dataclass
 class IDSEvent:
     """
-    Defining the structure for a single network event (Normalized IDS Event).
-    All Parser modules (Network, Transport, Application) must adhere to this schema before the data is pushed to the JSONL Logger.
+    Normalized IDS Event Schema.
+    status: Literal["OK", "UNKNOWN", "MALFORMED", "IGNORED"]
+    - OK: Parsed successfully
+    - UNKNOWN: Packet is outside the processing scope (e.g., ARP, IPv6 at the Network layer)
+    - MALFORMED: Structural/format error during parsing
+    - IGNORED: Packet intentionally skipped based on system configuration (e.g., skip policy)
     """
     
     # Layer 2 - Data Link Layer
