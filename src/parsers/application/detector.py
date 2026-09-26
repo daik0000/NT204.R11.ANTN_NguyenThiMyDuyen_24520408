@@ -89,7 +89,7 @@ def detect_protocol_by_payload(payload: bytes) -> str:
 
     return "UNKNOWN"
 
-def detect_application_protocol(payload: bytes, src_port: int, dst_port: int) -> Tuple[str, Optional[str]]:
+def detect_application_protocol(payload: bytes, src_port: int, dst_port: int, packet_id: Optional[int] = None) -> Tuple[str, Optional[str]]:
     """
     Combines both methods. Payload-based has higher weight and will override Port-based.
     Returns a Tuple: (Protocol, Detection Method)
@@ -103,9 +103,9 @@ def detect_application_protocol(payload: bytes, src_port: int, dst_port: int) ->
             return payload_proto, "port+payload"
             
         if port_proto != "UNKNOWN":
-            # True conflict — sign of evasion/anomaly
             logger.warning(
-                "Protocol evasion anomaly! Port suggests %s but Payload confirms %s. Overriding with Payload.", 
+                "Packet #%s: Protocol evasion anomaly! Port suggests %s but Payload confirms %s. Overriding with Payload.",
+                packet_id if packet_id is not None else "?",
                 port_proto, payload_proto
             )
         return payload_proto, "payload"
