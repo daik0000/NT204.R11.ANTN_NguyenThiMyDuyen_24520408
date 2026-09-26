@@ -110,7 +110,8 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
     app_proto, det_method = detect_application_protocol(
         payload=app_payload, 
         src_port=event_dict["src_port"], 
-        dst_port=event_dict["dst_port"]
+        dst_port=event_dict["dst_port"],
+        packet_id=packet_id
     )
     
     if app_proto == "UNKNOWN":
