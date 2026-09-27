@@ -1,7 +1,7 @@
 # Test Case 04: HTTP GET
 
 ## 1. Input
-- Nguồn: `input.pcap` (sinh bằng Scapy, xem `gen_pcap_file/gen_test_cases.py`)
+- Nguồn: `input.pcap` (sinh bằng Scapy, xem `gen_pcap_file/`)
 - Nội dung: 1 gói TCP (flags `PA`) từ Client (192.168.1.100:12345) đến Server (10.0.0.1:80), payload là 1 HTTP GET request đầy đủ header, không có body.
 
 ## 2. Kết quả mong đợi 
