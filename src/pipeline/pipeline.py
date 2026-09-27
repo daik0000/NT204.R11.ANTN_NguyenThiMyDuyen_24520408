@@ -121,7 +121,7 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
             event_dict["status"] = "IGNORED"
             # Do not set error_info since this is not an error; keep it as None
         else:
-            event_dict["app_protocol"] = None
+            event_dict["app_protocol"] = "UNKNOWN"
             event_dict["detection_method"] = det_method
         return IDSEvent(**event_dict)
 

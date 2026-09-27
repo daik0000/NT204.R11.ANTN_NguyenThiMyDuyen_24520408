@@ -6,4 +6,4 @@ ports:
   587: SMTP
 
 # Policy for handling unknown protocols or ports. Options: 'skip', 'log', 'alert'
-unknown_policy: skip
+unknown_policy: log
