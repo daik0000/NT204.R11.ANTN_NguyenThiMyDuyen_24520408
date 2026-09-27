@@ -1,5 +1,7 @@
 import logging
 from typing import Dict, Any
+from pathlib import Path
+import yaml
 
 from src.models.event import IDSEvent 
 from src.parsers.network.ipv4_parser import parse_ipv4
