@@ -16,6 +16,7 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--pcap", type=str, help="Path to the PCAP file for offline analysis")
     group.add_argument("--interface", type=str, help="Network interface for live capture (e.g., eth0)")
+    parser.add_argument("--output", type=str, default="output/events.jsonl", help="Path to the output JSONL file for logging events")
 
     parser.add_argument(
         "--bpf-filter",
@@ -40,7 +41,7 @@ def main():
             parser.error("Invalid capture mode selected.")
             return
 
-        with JSONLLogger() as logger_jsonl:
+        with JSONLLogger(file_path=args.output) as logger_jsonl:
             for timestamp, raw_bytes in capture_stream:
                 packet_count += 1
 
