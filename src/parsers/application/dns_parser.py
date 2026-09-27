@@ -55,43 +55,36 @@ def parse_dns(raw_bytes: bytes) -> Dict[str, Any]:
         "answers": []
     }
 
-    # 1. Parse Question Section
-    if pkt.qdcount > 0 and pkt.qd is not None:
-        current_q = pkt.qd
-        count = 0
-        while current_q and count < pkt.qdcount:
-            if isinstance(current_q, DNSQR):
-                qname = current_q.qname.decode('utf-8', errors='ignore').rstrip('.') if current_q.qname else ""
-                app_fields["queries"].append({
-                    "name": qname,
-                    "qtype": _get_dns_type(current_q.qtype)
-                })
-            current_q = current_q.payload
-            count += 1
+    # pkt.qd is 1 LIST DNSQRs, not chain over .payload
+    for q in (pkt.qd or []):
+        if isinstance(q, DNSQR):
+            qname = q.qname.decode('utf-8', errors='ignore').rstrip('.') if q.qname else ""
+            app_fields["queries"].append({
+                "name": qname,
+                "qtype": _get_dns_type(q.qtype)
+            })
 
-    # 2. Parse Answer Section
-    if pkt.qr == 1 and pkt.ancount > 0 and pkt.an is not None:
-        current_a = pkt.an
-        count = 0
-        while current_a and count < pkt.ancount:
-            if isinstance(current_a, DNSRR):
-                rrname = current_a.rrname.decode('utf-8', errors='ignore').rstrip('.') if current_a.rrname else ""
-                rdata = current_a.rdata
-                
+    # Similarly, pkt.an is 1 LIST DNSRRs
+    if pkt.qr == 1:
+        for a in (pkt.an or []):
+            if isinstance(a, DNSRR):
+                rrname = a.rrname.decode('utf-8', errors='ignore').rstrip('.') if a.rrname else ""
+                rdata = a.rdata
+
                 if isinstance(rdata, list):
-                    rdata_str = " ".join([b.decode('utf-8', errors='ignore') if isinstance(b, bytes) else str(b) for b in rdata])
+                    rdata_str = " ".join(
+                        b.decode('utf-8', errors='ignore') if isinstance(b, bytes) else str(b) for b in rdata
+                    )
                 elif isinstance(rdata, bytes):
                     rdata_str = rdata.decode('utf-8', errors='ignore')
                 else:
                     rdata_str = str(rdata)
-                    
+
                 app_fields["answers"].append({
                     "name": rrname,
-                    "type": _get_dns_type(current_a.type),
+                    "type": _get_dns_type(a.type),
                     "data": rdata_str.rstrip('.')
                 })
-            current_a = current_a.payload
-            count += 1
 
     return {
         "status": "OK",
