@@ -8,7 +8,7 @@
 - `status`: `"OK"`, không crash.
 - `network_protocol`: `"IPv4"`, `src_ip`: `192.168.1.100`, `dst_ip`: `10.0.0.1`.
 - `transport_protocol`: `"UDP"`, `src_port`: `12345`, `dst_port`: `53`.
-- `transport_fields.length_mismatch`: `false` (frame đủ lớn, không có Ethernet padding gây lệch — đối chiếu lại Actual để chắc chắn).
+- `transport_fields.length_mismatch`: `false` (frame đủ lớn, không có Ethernet padding gây lệch)
 - `app_protocol`: `"DNS"`, `detection_method`: `"port+payload"` (dst_port=53 khớp `KNOWN_PORTS`, payload cũng khớp heuristic RFC 1035 header).
 - `app_fields`:
   - `transaction_id`: `4660` (thập phân của `0x1234`)
@@ -18,7 +18,39 @@
   - `answers`: `[]`
 
 ## 3. Kết quả thực tế 
-`queries` chưa có nội dung.
-
+```json
+  "src_ip": "192.168.1.100",
+  "dst_ip": "10.0.0.1",
+  "network_protocol": "IPv4",
+  "network_fields": {
+    "ttl": 64,
+    "header_length": 20,
+    "ip_proto_number": 17
+  },
+  "src_port": 12345,
+  "dst_port": 53,
+  "transport_protocol": "UDP",
+  "transport_fields": {
+    "length": 37,
+    "length_mismatch": false
+  },
+  "app_protocol": "DNS",
+  "detection_method": "port+payload",
+  "app_fields": {
+    "transaction_id": 4660,
+    "type": "query",
+    "rcode": 0,
+    "queries": [
+      {
+        "name": "example.com",
+        "qtype": "A"
+      }
+    ],
+    "answers": []
+  },
+  "raw_length": 71,
+  "payload_length": 37,
+  "status": "OK",
+```
 ## 4. Kết luận
 **PASS**
