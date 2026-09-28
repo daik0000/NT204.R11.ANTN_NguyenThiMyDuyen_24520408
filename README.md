@@ -22,9 +22,9 @@ Bài tập đầu tiên (module này) xây dựng tầng **Packet Capture & Pars
 - [x] Parser tầng Network & Transport — IPv4, TCP, UDP (Issue #9)
 - [x] Nhận diện & parser tầng Application — HTTP, DNS, SMTP (Issue #11)
 - [x] Tích hợp pipeline hoàn chỉnh (Issue #13)
-- [ ] Chạy đủ các test case bắt buộc 
+- [x] Chạy đủ các test case bắt buộc (Issue #16)
 
-> Pipeline đã chạy end-to-end: `main.py`  -> capture (live/pcap)  -> network  -> transport  -> detector  -> application  -> chuẩn hóa `IDSEvent`  -> ghi ra `output/events.jsonl`. Bước tiếp theo (Issue #7) là chạy và lưu bằng chứng cho 12 test case bắt buộc của đề bài vào `TEST/`.
+> Module Packet Capture đã hoàn thành: pipeline chạy end-to-end (`main.py` -> capture live/pcap -> network -> transport -> detector -> application -> chuẩn hóa `IDSEvent` -> ghi ra `output/events.jsonl`) và đã vượt qua toàn bộ 12 test case bắt buộc của đề bài (xem mục "Kiểm thử" bên dưới).
 
 ## Cách chạy
 
@@ -87,6 +87,34 @@ Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòn
 
 Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src/utils/safe.py`) - bắt mọi lỗi phát sinh khi gặp packet dị dạng/thiếu header/payload quá ngắn, trả về `status="MALFORMED"` kèm `error_info` thay vì làm crash toàn bộ chương trình.
 
+
+## Kiểm thử
+
+Toàn bộ 12 test case bắt buộc nằm trong thư mục `TEST/`, mỗi test case là một thư mục riêng gồm: `input.pcap` (file đầu vào, sinh bằng Scapy hoặc bắt từ traffic thật), `events.jsonl` (output thực tế của pipeline) và `notes.md` (kết quả mong đợi, kết quả thực tế và kết luận).
+
+| # | Test case | Thư mục | Kết quả |
+|---|---|---|---|
+| 01 | TCP handshake (SYN, SYN/ACK, ACK) | `TEST/tcp_handshake/` | PASS |
+| 02 | TCP data có payload | `TEST/tcp_data/` | PASS |
+| 03 | UDP packet | `TEST/udp/` | PASS |
+| 04 | HTTP GET | `TEST/http_get/` | PASS |
+| 05 | HTTP POST có body | `TEST/http_post/` | PASS |
+| 06 | HTTP response (status code + header) | `TEST/http_response/` | PASS |
+| 07 | DNS query | `TEST/dns_query/` | PASS |
+| 08 | DNS response (≥ 1 answer) | `TEST/dns_response/` | PASS |
+| 09 | SMTP command | `TEST/smtp_command/` | PASS |
+| 10 | SMTP response | `TEST/smtp_response/` | PASS |
+| 11 | Unknown protocol (không crash) | `TEST/unknown_protocol/` | PASS |
+| 12 | Malformed packet (không crash) | `TEST/malformed_packet/` | PASS |
+
+Chạy lại một test case bất kỳ (từ thư mục gốc repo):
+
+```bash
+python main.py --pcap TEST/http_get/input.pcap --output <path_of_output/events.jsonl>
+```
+
+Kết quả được ghi vào `events.jsonl`; so sánh với phần "Kết quả mong đợi" trong `notes.md` của test case tương ứng.
+
 ## Cấu trúc thư mục
 
 ```
@@ -119,8 +147,21 @@ Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src
 │   └── utils/
 │       └── safe.py            # Decorator @safe_parse — bắt lỗi chung cho mọi parser, trả status="MALFORMED"
 ├── config/
-│   └── settings.yaml    # Mapping port cho từng application protocol, policy xử lý protocol không xác định
-└── TEST/ # Kết quả các test case bắt buộc: input dùng để test, output thực tế, và ghi chú đánh giá pass/fail cho từng test case.
+│   └── settings.yaml   # Mapping port cho từng application protocol, policy xử lý protocol không xác định
+└── TEST/ # 12 test case bắt buộc, mỗi case một thư mục riêng
+    ├── gen_pcap_file/  # Chứa code sinh ra các file pcap tương ứng, phục vụ việc testing
+    ├── tcp_handshake/  # Có (input.pcap, events.jsonl, notes.md)
+    ├── tcp_data/
+    ├── udp/
+    ├── http_get/
+    ├── http_post/
+    ├── http_response/
+    ├── dns_query/
+    ├── dns_response/
+    ├── smtp_command/
+    ├── smtp_response/
+    ├── unknown_protocol/
+    └── malformed_packet/
 ```
 
 Cấu trúc này được thiết kế để mở rộng cho các bài tập tiếp theo trong cùng repo: mỗi module IDS mới (feature extraction, phát hiện port scan, cảnh báo...) sẽ được thêm vào như một thành phần song song trong `src/`, dùng chung schema `IDSEvent` mà module này tạo ra.
