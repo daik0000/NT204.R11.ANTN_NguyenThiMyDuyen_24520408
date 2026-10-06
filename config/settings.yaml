@@ -7,3 +7,22 @@ ports:
 
 # Policy for handling unknown protocols or ports. Options: 'skip', 'log', 'alert'
 unknown_policy: log
+
+decoder:
+  enabled: true
+  max_payload_bytes: 65536
+  url_decode_passes: 1
+  plus_as_space_in_query: true  # '+' -> ' ' in query
+  html_entity_content_types: ["text/html", "text/plain", "application/x-www-form-urlencoded"]
+preprocessor:
+  unsupported_policy: mark # mark | skip (protocol not support: ICMP, ARP, IPv6...)
+  invalid_policy: flag # flag | drop (event invalid)
+  max_future_timestamp_skew_sec: 86400
+flow:
+  tcp_idle_timeout_sec: 300
+  udp_idle_timeout_sec: 60
+  tcp_handshake_timeout_sec: 30 # flow kẹt ở HANDSHAKE (SYN scan/SYN flood)
+  tcp_closed_linger_sec: 10 # giữ flow đã CLOSED/RESET để hứng ACK/retransmit muộn
+  tcp_close_requires_final_ack: false  # false: thấy đủ FIN hai chiều là CLOSED; true: chờ thêm ACK cuối
+  max_active_flows: 100000 # chống phình bộ nhớ; vượt -> xuất flow lâu không hoạt động nhất
+  sweep_interval_sec: 1.0 # quét timeout tối đa mỗi 1s event-time
