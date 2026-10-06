@@ -11,5 +11,5 @@ payload = Raw(b"UDP Test Data")
 
 packet = eth/ip/udp/payload
 
-wrpcap("TEST/udp/input.pcap", [packet])
-print("Created TEST/udp/input.pcap")
+wrpcap("TEST/part1-packet-capture-test/udp/input.pcap", [packet])
+print("Created TEST/part1-packet-capture-test/udp/input.pcap")

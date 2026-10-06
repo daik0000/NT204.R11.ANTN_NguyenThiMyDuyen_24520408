@@ -11,5 +11,5 @@ payload = Raw(b"GET /index.html HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n
 
 packet = eth/ip/tcp/payload
 
-wrpcap("TEST/http_get/input.pcap", [packet])
-print("Created TEST/http_get/input.pcap")
+wrpcap("TEST/part1-packet-capture-test/http_get/input.pcap", [packet])
+print("Created TEST/part1-packet-capture-test/http_get/input.pcap")

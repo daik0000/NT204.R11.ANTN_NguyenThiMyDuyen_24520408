@@ -11,5 +11,5 @@ payload = Raw(b"POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Length:
 
 packet = eth/ip/tcp/payload
 
-wrpcap("TEST/http_post/input.pcap", [packet])
-print("Created TEST/http_post/input.pcap")
+wrpcap("TEST/part1-packet-capture-test/http_post/input.pcap", [packet])
+print("Created TEST/part1-packet-capture-test/http_post/input.pcap")

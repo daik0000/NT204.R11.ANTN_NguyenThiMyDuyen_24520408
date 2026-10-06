@@ -13,5 +13,5 @@ dns = DNS(id=0x1234, qr=1, aa=1, rcode=0, qdcount=1, ancount=1,
 
 packet = eth/ip/udp/dns
 
-wrpcap("TEST/dns_response/input.pcap", [packet])
-print("Created TEST/dns_response/input.pcap")
+wrpcap("TEST/part1-packet-capture-test/dns_response/input.pcap", [packet])
+print("Created TEST/part1-packet-capture-test/dns_response/input.pcap")

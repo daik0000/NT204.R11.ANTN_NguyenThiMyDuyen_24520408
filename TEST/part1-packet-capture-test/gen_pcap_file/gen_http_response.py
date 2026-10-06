@@ -11,5 +11,5 @@ payload = Raw(b"HTTP/1.1 200 OK\r\nServer: nginx\r\nContent-Length: 13\r\n\r\nHe
 
 packet = eth/ip/tcp/payload
 
-wrpcap("TEST/http_response/input.pcap", [packet])
-print("Created TEST/http_response/input.pcap")
+wrpcap("TEST/part1-packet-capture-test/http_response/input.pcap", [packet])
+print("Created TEST/part1-packet-capture-test/http_response/input.pcap")
