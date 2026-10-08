@@ -8,5 +8,5 @@ syn = TCP(sport=12345, dport=80, flags="S", seq=1000)
 syn_ack = TCP(sport=80, dport=12345, flags="SA", seq=2000, ack=1001)
 ack = TCP(sport=12345, dport=80, flags="A", seq=1001, ack=2001)
 
-wrpcap("TEST/tcp_handshake/input.pcap", [eth/ip/syn, eth/ip/syn_ack, eth/ip/ack])
-print("Created TEST/tcp_handshake/input.pcap")
+wrpcap("TEST/part1-packet-capture-test/tcp_handshake/input.pcap", [eth/ip/syn, eth/ip/syn_ack, eth/ip/ack])
+print("Created TEST/part1-packet-capture-test/tcp_handshake/input.pcap")

@@ -9,5 +9,5 @@ payload = Raw(b"Hello, this is a TCP payload for testing!")
 
 packet = eth/ip/tcp/payload
 
-wrpcap("TEST/tcp_data/input.pcap", [packet])
-print("Created TEST/tcp_data/input.pcap")
+wrpcap("TEST/part1-packet-capture-test/tcp_data/input.pcap", [packet])
+print("Created TEST/part1-packet-capture-test/tcp_data/input.pcap")

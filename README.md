@@ -14,17 +14,47 @@ Bài tập đầu tiên (module này) xây dựng tầng **Packet Capture & Pars
 - Đảm bảo không crash khi gặp packet lỗi, thiếu header, payload rỗng, hoặc protocol không được hỗ trợ.
 - Ghi lại toàn bộ kết quả parse ra file theo định dạng JSON Lines, để tái sử dụng ở các bài tập tiếp theo.
 
+**Bài 2** (đang thực hiện) bổ sung 3 module **Decoder**, **Preprocessor** và **Flow/Connection Tracker** lên trên pipeline của Bài 1 - xem mục "Trạng thái hiện tại".
+
 ## Trạng thái hiện tại
 
-- [x] Khởi tạo project, cấu trúc thư mục (Issue #1)
-- [x] Chuẩn hóa schema dữ liệu sự kiện (`IDSEvent`) và JSON Lines logger (Issue #3)
-- [x] Thu thập packet — live capture + PCAP import (Issue #4)
-- [x] Parser tầng Network & Transport — IPv4, TCP, UDP (Issue #9)
-- [x] Nhận diện & parser tầng Application — HTTP, DNS, SMTP (Issue #11)
-- [x] Tích hợp pipeline hoàn chỉnh (Issue #13)
-- [x] Chạy đủ các test case bắt buộc (Issue #16)
+### Bài 1 — Packet Capture & Parser
 
-> Module Packet Capture đã hoàn thành: pipeline chạy end-to-end (`main.py` -> capture live/pcap -> network -> transport -> detector -> application -> chuẩn hóa `IDSEvent` -> ghi ra `output/events.jsonl`) và đã vượt qua toàn bộ 12 test case bắt buộc của đề bài (xem mục "Kiểm thử" bên dưới).
+Hoàn thành (Issue #1-#7): pipeline chạy end-to-end (`main.py` -> capture live/pcap -> network -> transport -> detector -> application -> chuẩn hóa `IDSEvent` -> ghi ra `output/events.jsonl`) và vượt qua toàn bộ 12 test case bắt buộc của đề bài (xem mục "Kiểm thử").
+
+### Bài 2 — Decoder, Preprocessor & Flow/Connection Tracker
+
+**Mục tiêu**
+
+Mở rộng pipeline của Bài 1 bằng 3 module, đầu vào là `IDSEvent` đã chuẩn hóa:
+
+```
+Capture -> Parser -> Decoder -> Preprocessor -> Flow Tracker -> (Feature Extractor — bài sau)
+```
+
+| Module | Nhiệm vụ chính |
+|---|---|
+| **Decoder** | Giải mã percent-encoding và `application/x-www-form-urlencoded` trong HTTP, HTML entity, MIME Base64/Quoted-Printable trong SMTP, ASCII/UTF-8; giữ nguyên dữ liệu gốc, byte lỗi chỉ đánh dấu `PARTIAL`, không crash |
+| **Preprocessor** | Validation (`valid`/`partial`/`invalid`), chuẩn hóa (protocol, IP, domain, header, URI, timestamp), xử lý field thiếu và protocol không hỗ trợ, gắn metadata `preprocess_status`/`processing_action`/`reason` |
+| **Flow Tracker** | Gom packet hai chiều theo 5-tuple, `flow_id` ổn định, xác định `direction`, máy trạng thái TCP (`HANDSHAKE -> ESTABLISHED -> CLOSING -> CLOSED/RESET`), UDP flow, idle timeout, thống kê trên mỗi flow, xuất `flows.jsonl` |
+
+Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua packet đều cấu hình được qua `config/settings.yaml`; một packet lỗi không được làm dừng chương trình.
+
+**Test bắt buộc:** 14 test case T01-T14 (HTTP URL decode, HTML entity, SMTP Base64/QP, invalid bytes, normalization, missing field, TCP handshake, bidirectional flow, TCP close, UDP query/response, concurrent flows, idle timeout, statistics, malformed event).
+
+**Tiến độ hiện tại**
+
+| Issue | Nội dung | Trạng thái |
+|---|---|---|
+| #8 | Scaffold, gom test Bài 1 vào `TEST/bai1/`, config loader, PCAP builder | Hoàn thành |
+| #9 | Mở rộng `IDSEvent`, schema `Flow`, bổ sung HTTP/SMTP parser cho Decoder | (Chưa bắt đầu) |
+| #10 | Decoder | (Chưa bắt đầu) |
+| #11 | Preprocessor | (Chưa bắt đầu) |
+| #12 | Flow Tracker: key, direction, flow table, thống kê cơ bản | (Chưa bắt đầu) |
+| #13 | Theo dõi kết nối TCP | (Chưa bắt đầu) |
+| #14 | UDP flow, idle timeout, giải phóng flow hết hạn | (Chưa bắt đầu) |
+| #15 | Tích hợp pipeline, `flows.jsonl`, CLI | (Chưa bắt đầu) |
+| #16 | Chạy test T01-T14 + hồi quy Bài 1 | (Chưa bắt đầu) |
 
 ## Cách chạy
 
@@ -87,34 +117,6 @@ Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòn
 
 Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src/utils/safe.py`) - bắt mọi lỗi phát sinh khi gặp packet dị dạng/thiếu header/payload quá ngắn, trả về `status="MALFORMED"` kèm `error_info` thay vì làm crash toàn bộ chương trình.
 
-
-## Kiểm thử
-
-Toàn bộ 12 test case bắt buộc nằm trong thư mục `TEST/`, mỗi test case là một thư mục riêng gồm: `input.pcap` (file đầu vào, sinh bằng Scapy hoặc bắt từ traffic thật), `events.jsonl` (output thực tế của pipeline) và `notes.md` (kết quả mong đợi, kết quả thực tế và kết luận).
-
-| # | Test case | Thư mục | Kết quả |
-|---|---|---|---|
-| 01 | TCP handshake (SYN, SYN/ACK, ACK) | `TEST/tcp_handshake/` | PASS |
-| 02 | TCP data có payload | `TEST/tcp_data/` | PASS |
-| 03 | UDP packet | `TEST/udp/` | PASS |
-| 04 | HTTP GET | `TEST/http_get/` | PASS |
-| 05 | HTTP POST có body | `TEST/http_post/` | PASS |
-| 06 | HTTP response (status code + header) | `TEST/http_response/` | PASS |
-| 07 | DNS query | `TEST/dns_query/` | PASS |
-| 08 | DNS response (≥ 1 answer) | `TEST/dns_response/` | PASS |
-| 09 | SMTP command | `TEST/smtp_command/` | PASS |
-| 10 | SMTP response | `TEST/smtp_response/` | PASS |
-| 11 | Unknown protocol (không crash) | `TEST/unknown_protocol/` | PASS |
-| 12 | Malformed packet (không crash) | `TEST/malformed_packet/` | PASS |
-
-Chạy lại một test case bất kỳ (từ thư mục gốc repo):
-
-```bash
-python main.py --pcap TEST/http_get/input.pcap --output <path_of_output/events.jsonl>
-```
-
-Kết quả được ghi vào `events.jsonl`; so sánh với phần "Kết quả mong đợi" trong `notes.md` của test case tương ứng.
-
 ## Cấu trúc thư mục
 
 ```
@@ -144,24 +146,20 @@ Kết quả được ghi vào `events.jsonl`; so sánh với phần "Kết quả
 │   │       └── smtp_parser.py     # Decode SMTP command/response theo dòng: multi-line, pipelining
 │   ├── pipeline/
 │   │   └── pipeline.py         # process_packet() — orchestrate network  -> transport  -> detector  -> application  -> IDSEvent
+│   ├── decoder/               # [Part 2] Giải mã URL/form, HTML entity, MIME Base64/QP, charset (đang phát triển)
+│   ├── preprocessor/          # [Part 2] Validation, normalization, xử lý field thiếu (đang phát triển)
+│   ├── flow/                  # [Part 2] Flow/Connection Tracker: 5-tuple, TCP state, UDP, timeout (đang phát triển)
 │   └── utils/
 │       └── safe.py            # Decorator @safe_parse — bắt lỗi chung cho mọi parser, trả status="MALFORMED"
+│       └── config.py          # Load, merge mặc định và validate config/settings.yaml
 ├── config/
 │   └── settings.yaml   # Mapping port cho từng application protocol, policy xử lý protocol không xác định
-└── TEST/ # 12 test case bắt buộc, mỗi case một thư mục riêng
-    ├── gen_pcap_file/  # Chứa code sinh ra các file pcap tương ứng, phục vụ việc testing
-    ├── tcp_handshake/  # Có (input.pcap, events.jsonl, notes.md)
-    ├── tcp_data/
-    ├── udp/
-    ├── http_get/
-    ├── http_post/
-    ├── http_response/
-    ├── dns_query/
-    ├── dns_response/
-    ├── smtp_command/
-    ├── smtp_response/
-    ├── unknown_protocol/
-    └── malformed_packet/
+└── TEST/
+    ├── part1-packet-capture-test/ # 12 test case bắt buộc của Bài 1, mỗi case một thư mục riêng
+    ├── part2-decoder-to-flowtracker-test/
+    │   └── unit/              # unit test theo từng module
+    └── helpers/
+        └── pcap_builder.py    # Dựng PCAP có timestamp và MAC cố định phục vụ test
 ```
 
 Cấu trúc này được thiết kế để mở rộng cho các bài tập tiếp theo trong cùng repo: mỗi module IDS mới (feature extraction, phát hiện port scan, cảnh báo...) sẽ được thêm vào như một thành phần song song trong `src/`, dùng chung schema `IDSEvent` mà module này tạo ra.
