@@ -20,7 +20,7 @@ Bài tập đầu tiên (module này) xây dựng tầng **Packet Capture & Pars
 
 ### Bài 1 — Packet Capture & Parser
 
-Hoàn thành (Issue #1-#7): pipeline chạy end-to-end (`main.py` -> capture live/pcap -> network -> transport -> detector -> application -> chuẩn hóa `IDSEvent` -> ghi ra `output/events.jsonl`) và vượt qua toàn bộ 12 test case bắt buộc của đề bài (xem mục "Kiểm thử").
+Hoàn thành: pipeline chạy end-to-end (`main.py` -> capture live/pcap -> network -> transport -> detector -> application -> chuẩn hóa `IDSEvent` -> ghi ra `output/events.jsonl`) và vượt qua toàn bộ 12 test case bắt buộc của đề bài (xem thư mục `TEST/part1-packet-capture-test/`).
 
 ### Bài 2 — Decoder, Preprocessor & Flow/Connection Tracker
 
@@ -46,15 +46,15 @@ Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua
 
 | Issue | Nội dung | Trạng thái |
 |---|---|---|
-| #8 | Scaffold, gom test Bài 1 vào `TEST/bai1/`, config loader, PCAP builder | Hoàn thành |
-| #9 | Mở rộng `IDSEvent`, schema `Flow`, bổ sung HTTP/SMTP parser cho Decoder | (Chưa bắt đầu) |
-| #10 | Decoder | (Chưa bắt đầu) |
-| #11 | Preprocessor | (Chưa bắt đầu) |
-| #12 | Flow Tracker: key, direction, flow table, thống kê cơ bản | (Chưa bắt đầu) |
-| #13 | Theo dõi kết nối TCP | (Chưa bắt đầu) |
-| #14 | UDP flow, idle timeout, giải phóng flow hết hạn | (Chưa bắt đầu) |
-| #15 | Tích hợp pipeline, `flows.jsonl`, CLI | (Chưa bắt đầu) |
-| #16 | Chạy test T01-T14 + hồi quy Bài 1 | (Chưa bắt đầu) |
+| #18 | Scaffold, gom test Bài 1 vào `TEST/part1-packet-capture-test/`, config loader, PCAP builder | Hoàn thành |
+| #19 | Mở rộng `IDSEvent`, schema `Flow`, bổ sung HTTP/SMTP parser cho Decoder | Hoàn thành |
+| #20 | Decoder | (Chưa bắt đầu) |
+| #22 | Preprocessor | (Chưa bắt đầu) |
+| #23 | Flow Tracker: key, direction, flow table, thống kê cơ bản | (Chưa bắt đầu) |
+| #24 | Theo dõi kết nối TCP | (Chưa bắt đầu) |
+| #25 | UDP flow, idle timeout, giải phóng flow hết hạn | (Chưa bắt đầu) |
+| #26 | Tích hợp pipeline, `flows.jsonl`, CLI | (Chưa bắt đầu) |
+| #27 | Chạy test T01-T14 + Regression test Bài 1 | (Chưa bắt đầu) |
 
 ## Cách chạy
 
@@ -105,17 +105,51 @@ Hai giá trị trên chỉ có hiệu lực cho phiên làm việc hiện tại;
 
 ## IDSEvent
 
-Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòng JSON theo schema `IDSEvent` (định nghĩa tại `src/models/event.py`), gồm 4 nhóm field:
+Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòng JSON theo schema `IDSEvent` (định nghĩa tại `src/models/event.py`), gồm các nhóm field sau:
 
 - **Định danh & thời gian**: `packet_id`, `timestamp`
 - **Network layer**: `src_ip`, `dst_ip`, `network_protocol`, `network_fields` (chi tiết riêng của IPv4 như `ttl`, `header_length`)
 - **Transport layer**: `src_port`, `dst_port`, `transport_protocol`, `transport_fields` (với TCP: `flags`, `seq`, `ack`, `window`; với UDP: `length`)
-- **Application layer**: `app_protocol`, `detection_method` (`port`/`payload`/`port+payload`), `app_fields` (chi tiết riêng theo từng giao thức HTTP/DNS/SMTP)
-- **Metadata**: `raw_length`, `payload_length`, `status` (`OK`/`UNKNOWN`/`MALFORMED`/`IGNORED`), `error_info` (chi tiết lỗi khi `status="MALFORMED"`, gồm `layer` và `detail`; luôn `None` khi `status="IGNORED"` vì đây không phải lỗi, chỉ là packet bị bỏ qua có chủ ý theo `unknown_policy`)
+- **Application layer**: `app_protocol` (`None` = detector chưa chạy; `"UNKNOWN"` = đã chạy nhưng không nhận diện được), `detection_method` (`port`/`payload`/`port+payload`), `app_fields` (chi tiết riêng theo từng giao thức HTTP/DNS/SMTP)
+- **Metadata**: `raw_length` (độ dài cả frame), `payload_length` (độ dài phần payload của gói IP, tức đoạn tầng giao vận **gồm cả header TCP/UDP** - không phải độ dài dữ liệu ứng dụng), `status` (`OK`/`UNKNOWN`/`MALFORMED`/`IGNORED`), `error_info` (chi tiết lỗi khi `status="MALFORMED"`, gồm `layer` và `detail`; luôn `None` khi `status="IGNORED"` vì đây không phải lỗi, chỉ là packet bị bỏ qua có chủ ý theo `unknown_policy`)
+
+Các nhóm field bổ sung ở Bài 2 (đều có giá trị mặc định, nên code Bài 1 không bị ảnh hưởng):
+
+- **Decoder**: `decoded_fields` (dữ liệu đã giải mã theo từng nguồn; dữ liệu gốc trong `app_fields` luôn được giữ nguyên), `decode_status` (`OK`/`PARTIAL`/`FAILED`/`SKIPPED`; `None` = Decoder chưa chạy)
+- **Preprocessor**: `timestamp_iso` (UTC ISO-8601), `preprocess_status` (`valid`/`partial`/`invalid`; `None` = chưa chạy), `processing_action` (`none`/`normalized`/`defaults_filled`/`flagged`/`skipped`/`dropped`), `reason` (danh sách mã lý do, `[]` khi không có)
+- **Flow Tracker**: `flow_id`, `direction` (`forward`/`backward`), `flow_state` (trạng thái flow ngay sau khi xử lý packet này)
+- **Chỉ trong bộ nhớ**: `payload` - bytes nguyên văn của tầng ứng dụng, dành cho Decoder (`b""` khi packet không có dữ liệu ứng dụng, `None` khi không tới được tầng transport). Field này **không bao giờ được ghi ra log** (`to_dict()` loại bỏ nó).
+
+`status` (kết quả parse), `decode_status` (kết quả Decoder) và `preprocess_status` (kết quả validation) là ba trạng thái độc lập, không ghi đè nhau.
+
+Một số `app_fields` được bổ sung để Decoder dùng trực tiếp:
+- **HTTP**: `uri` (request-target nguyên văn, chưa giải mã), `header_pairs` (từng dòng header `[tên, giá trị]` giữ nguyên chữ hoa/thường, thứ tự và các dòng trùng), `body_offset` (vị trí bắt đầu body trong `payload`; `None` nếu chưa thấy dòng trống kết thúc header), `content_type`, `charset`, `content_length`.
+- **SMTP DATA** (nội dung thư): `type="data"`, `mime_headers` (tên header viết thường), `body_offset`. Hai loại cũ vẫn là `type="command"` và `type="response"`.
 
 Đây là format dữ liệu duy nhất mà các module phía sau được phép sử dụng - không truy cập trực tiếp object của thư viện capture (Scapy). Kết quả được ghi liên tục ra file JSON Lines (mặc định `output/events.jsonl`) qua `src/logging/jsonl_logger.py`.
 
 Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src/utils/safe.py`) - bắt mọi lỗi phát sinh khi gặp packet dị dạng/thiếu header/payload quá ngắn, trả về `status="MALFORMED"` kèm `error_info` thay vì làm crash toàn bộ chương trình.
+
+## Flow record
+
+Schema `Flow` (định nghĩa tại `src/models/flow.py`) mô tả một kết nối/phiên hai chiều. Flow Tracker sẽ tạo và cập nhật các record này ở Issue #12-#14 và ghi ra `flows.jsonl` khi flow kết thúc.
+
+| Nhóm | Field |
+|---|---|
+| Định danh | `flow_id`, `protocol` (`TCP`/`UDP`), `application_protocol`, `endpoint_a`, `endpoint_b` (mỗi endpoint là `{"ip", "port"}`) |
+| Thời gian | `start_time`, `last_seen`, `duration` |
+| Tổng thể | `packet_count`, `byte_count`, `payload_byte_count` |
+| Hai chiều | `fwd_packet_count`, `fwd_byte_count`, `bwd_packet_count`, `bwd_byte_count` |
+| TCP | `syn_count`, `ack_count`, `fin_count`, `rst_count`, `state` |
+| Phụ trợ | `close_reason`, `midstream` |
+
+Quy ước:
+- `endpoint_a` là bên gửi packet đầu tiên được thấy (thường là bên khởi tạo); `forward` là chiều A -> B, `backward` là chiều B -> A.
+- `duration` luôn được tính từ `last_seen - start_time` (không âm), không lưu riêng.
+- `byte_count` là tổng độ dài frame (khớp cột *Bytes* của Wireshark -> Statistics -> Conversations); `payload_byte_count` chỉ tính dữ liệu tầng ứng dụng.
+- Mỗi bộ đếm cờ là số packet **có mang cờ đó** (một packet SYN/ACK tăng cả `syn_count` lẫn `ack_count`). Đối chiếu tên với đề: `SYN_count` <-> `syn_count`, tương tự cho ACK/FIN/RST.
+- `state` của TCP: `HANDSHAKE`, `ESTABLISHED`, `CLOSING`, `CLOSED`, `RESET`; với UDP luôn là `ACTIVE` (UDP không có trạng thái kết nối) và các bộ đếm cờ TCP bằng 0.
+- `close_reason` là `None` khi flow còn hoạt động; khi flow được xuất ra có thể là `tcp_closed`, `tcp_reset`, `idle_timeout`, `handshake_timeout`, `port_reuse`, `evicted` hoặc `flush`.
 
 ## Cấu trúc thư mục
 
@@ -127,9 +161,10 @@ Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src
 ├── main.py  # CLI entrypoint: --interface / --pcap
 ├── src/
 │   ├── models/
-│   │   └── event.py # Dataclass IDSEvent — schema chuẩn hóa dữ liệu sự kiện
+│   │   ├── event.py # Dataclass IDSEvent — schema chuẩn hóa dữ liệu sự kiện (gồm các field của Bài 2)
+│   │   └── flow.py  # [Part 2] Dataclass Flow — schema flow record cho Flow Tracker
 │   ├── logging/
-│   │   └── jsonl_logger.py # JSONLLogger — ghi IDSEvent ra file JSON Lines
+│   │   └── jsonl_logger.py # JSONLLogger — ghi IDSEvent và Flow ra file JSON Lines
 │   ├── capture/
 │   │   ├── pcap_reader.py     # Đọc file PCAP theo generator, trả về (timestamp, raw_bytes)
 │   │   └── live_capture.py    # Bắt live traffic qua producer-consumer queue, trả về (timestamp, raw_bytes)
@@ -141,16 +176,16 @@ Mỗi parser (`src/parsers/`) được bọc bởi decorator `@safe_parse` (`src
 │   │   │   └── udp_parser.py
 │   │   └── application/
 │   │       ├── detector.py        # Nhận diện app protocol: port-based + payload signature, trả kèm detection_method
-│   │       ├── http_parser.py     # Decode HTTP request/response: method, path, status_code, headers, body preview
+│   │       ├── http_parser.py     # Decode HTTP request/response: method, path, uri (nguyên văn), status_code, headers, header_pairs, body_offset, body preview
 │   │       ├── dns_parser.py      # Decode DNS query/response qua scapy.layers.dns: queries, answers
-│   │       └── smtp_parser.py     # Decode SMTP command/response theo dòng: multi-line, pipelining
+│   │       └── smtp_parser.py     # Decode SMTP command/response theo dòng: multi-line, pipelining; DATA: mime_headers + body_offset
 │   ├── pipeline/
 │   │   └── pipeline.py         # process_packet() — orchestrate network  -> transport  -> detector  -> application  -> IDSEvent
 │   ├── decoder/               # [Part 2] Giải mã URL/form, HTML entity, MIME Base64/QP, charset (đang phát triển)
 │   ├── preprocessor/          # [Part 2] Validation, normalization, xử lý field thiếu (đang phát triển)
 │   ├── flow/                  # [Part 2] Flow/Connection Tracker: 5-tuple, TCP state, UDP, timeout (đang phát triển)
 │   └── utils/
-│       └── safe.py            # Decorator @safe_parse — bắt lỗi chung cho mọi parser, trả status="MALFORMED"
+│       ├── safe.py            # Decorator @safe_parse — bắt lỗi chung cho mọi parser, trả status="MALFORMED"
 │       └── config.py          # Load, merge mặc định và validate config/settings.yaml
 ├── config/
 │   └── settings.yaml   # Mapping port cho từng application protocol, policy xử lý protocol không xác định
@@ -166,6 +201,9 @@ Cấu trúc này được thiết kế để mở rộng cho các bài tập ti�
 
 ## AI usage disclosure
 
-Trong quá trình phát triển module này, Claude Sonnet 5 (Anthropic) được sử dụng với vai trò **review code và đưa ra gợi ý chỉnh sửa** cho từng commit trước khi đưa lên repo - không viết thay toàn bộ code. Phần lớn code nộp bài do người thực hiện tự viết; Claude chỉ đọc lại, chỉ ra lỗi/rủi ro tiềm ẩn (ví dụ: sai lệch so với schema đã chốt, race condition, dữ liệu bị parse sai âm thầm) và đề xuất hướng sửa, việc quyết định áp dụng sửa nào do người thực hiện tự cân nhắc.
+Trong quá trình phát triển, Claude Sonnet 5.5 (Anthropic) được sử dụng như sau:
+
+- **Bài 1 - Packet Capture**: vai trò **review code và đưa ra gợi ý chỉnh sửa** cho từng commit trước khi đưa lên repo - không viết thay toàn bộ code. Phần lớn code nộp bài do người thực hiện tự viết; Claude chỉ đọc lại, chỉ ra lỗi/rủi ro tiềm ẩn (ví dụ: sai lệch so với schema đã chốt, race condition, dữ liệu bị parse sai âm thầm) và đề xuất hướng sửa, việc quyết định áp dụng sửa nào do người thực hiện tự cân nhắc.
+- **Bài 2 - Decoder, Preprocessor và Flow Tracker**: lập kế hoạch Issue/commit (timeline) cho Bài 2; review từng commit như ở Bài 1; với một số file, Claude đề xuất đoạn mã sửa kèm unit test để người thực hiện đối chiếu, tự kiểm tra và quyết định áp dụng.
 
 Khi mở Pull Request, GitHub Copilot đóng vai trò reviewer tự động - các comment của Copilot mang tính tham khảo, không tự động áp dụng thay đổi vào code.
