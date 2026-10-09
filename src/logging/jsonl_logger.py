@@ -2,11 +2,11 @@ import json
 import os
 import sys
 import threading
-from src.models.event import IDSEvent
+from typing import Any
 
 class JSONLLogger:
     """
-    A thread-safe logger that writes IDSEvent objects to a file in JSONL format.
+    A thread-safe logger that writes dataclass objects (like IDSEvent or Flow) to a file in JSONL format.
     Ensures safe, append-only writing with immediate disk flushing to prevent data loss.
     """
 
@@ -21,6 +21,10 @@ class JSONLLogger:
         """
         self.file_path = file_path
         self.sync_every_write = sync_every_write
+        
+        # Number of records that could not be written (serialization or I/O errors).
+        # Errors never stop the pipeline, so callers and tests check this counter instead.
+        self.write_errors = 0
         
         # Lock ensures thread-safety if multiple consumer threads process packets concurrently
         self._lock = threading.Lock()
@@ -41,13 +45,14 @@ class JSONLLogger:
             print(f"[CRITICAL] OS Error initializing logger at '{self.file_path}': {e}")
             raise
 
-    def log_event(self, event: IDSEvent) -> None:
+    def log(self, record: Any) -> None:
         """
-        Serializes an IDSEvent to a JSON string and appends it as a new line.
+        Serializes a dataclass object (IDSEvent, Flow) to a JSON string and appends it as a new line.
         Thread-safe for multi-worker environments.
         """
         try:
-            json_str = json.dumps(event.to_dict(), ensure_ascii=False)
+            # Relies on the standard to_dict() method implemented in both IDSEvent and Flow schemas
+            json_str = json.dumps(record.to_dict(), ensure_ascii=False)
             
             # Acquire lock before writing to prevent interleaved/corrupted JSON lines
             with self._lock:
@@ -61,7 +66,13 @@ class JSONLLogger:
                     os.fsync(self._file.fileno())
                     
         except Exception as e:
-            print(f"[ERROR] Failed to write event to JSONL log: {e}")
+            self.write_errors += 1
+            print(f"[ERROR] Failed to write record to JSONL log: {e}", file=sys.stderr)
+
+    # Backward compatibility alias for Bai 1
+    # Bai 1 detector pipeline calls `logger.log_event(event)`
+    def log_event(self, event: Any) -> None:
+        self.log(event)
 
     def close(self) -> None:
         """

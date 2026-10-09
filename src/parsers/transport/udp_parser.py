@@ -1,6 +1,5 @@
 from typing import Dict, Any
 from scapy.layers.inet import UDP
-from scapy.packet import NoPayload
 from src.utils.safe import safe_parse
 
 # Minimum length of a standard UDP header is strictly 8 bytes
@@ -26,11 +25,13 @@ def parse_udp(raw_bytes: bytes) -> Dict[str, Any]:
     declared_length = udp_layer.len
     actual_length = len(raw_bytes)
     
-    # Safely extract L7 Application payload, handling the NoPayload edge case
-    if isinstance(udp_layer.payload, NoPayload):
-        app_payload = b""
+    # Extract the L7 Application payload by slicing with the declared UDP length.
+    # This keeps Ethernet padding out of the payload (including the empty-datagram case),
+    # and does not depend on which Scapy layer (Raw, DNS, ...) the payload was decoded as.
+    if declared_length > MIN_UDP_HEADER_LEN:
+        app_payload = raw_bytes[MIN_UDP_HEADER_LEN:declared_length]
     else:
-        app_payload = udp_layer.payload.original
+        app_payload = b""
         
     return {
         "status": "OK",

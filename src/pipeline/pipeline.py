@@ -105,6 +105,11 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
     })
     
     app_payload = trans_result.get("app_payload", b"")
+
+    # Keep the exact application-layer bytes in memory for the Decoder (never written to logs).
+    # b"" means the transport layer was parsed successfully but carried no application data.
+    event_dict["payload"] = app_payload
+
     if not app_payload:
         return IDSEvent(**event_dict)
 
