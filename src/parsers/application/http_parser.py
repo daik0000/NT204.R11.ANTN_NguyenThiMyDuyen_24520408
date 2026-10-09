@@ -9,8 +9,9 @@ def parse_http(raw_bytes: bytes) -> Dict[str, Any]:
     KNOWN LIMITATIONS:
     1. TCP Fragmentation: The parser only operates on individual packets (stateless).
        TCP Reassembly for large fragmented payloads is not yet supported.
-    2. Header Duplication: If multiple headers share the same name (e.g., Set-Cookie),
-       the last value will overwrite previous ones.
+    2. Header Duplication: `headers` keeps the last value of a repeated header (Bai 1 behavior).
+       Every header line is also kept in `header_pairs` (original case, order, duplicates);
+       the Preprocessor builds the normalized/merged view from it (Bai 2).
     3. Obsolete Line Folding: Concatenation of headers spanning multiple lines is not yet supported.
     """
     if not raw_bytes:
@@ -20,6 +21,12 @@ def parse_http(raw_bytes: bytes) -> Dict[str, Any]:
     parts = raw_bytes.split(b'\r\n\r\n', 1)
     header_bytes = parts[0]
     body_bytes = parts[1] if len(parts) > 1 else b""
+
+    # Calculate body offset for Decoder to extract raw payload directly (Bai 2)
+    # len(header_bytes) + 4 accounts for the \r\n\r\n separator.
+    # None  -> no header terminator found (headers incomplete, segmented, or not CRLF-based).
+    # int   -> header terminator found; the body may still be empty (offset == len(raw_bytes)).
+    body_offset = len(header_bytes) + 4 if len(parts) > 1 else None
 
     header_text = header_bytes.decode('utf-8', errors='ignore')
     lines = header_text.split('\r\n')
@@ -34,7 +41,14 @@ def parse_http(raw_bytes: bytes) -> Dict[str, Any]:
         "status": "OK",
         "app_protocol": "HTTP",
         "app_fields": {
-            "headers": {}
+            "headers": {},
+            # Raw [name, value] pairs: original case, original order, duplicates kept (Bai 2).
+            # Input for the Preprocessor's header normalization.
+            "header_pairs": [],
+            "body_offset": body_offset,
+            "content_type": None,
+            "charset": None,
+            "content_length": None
         }
     }
 
@@ -56,6 +70,10 @@ def parse_http(raw_bytes: bytes) -> Dict[str, Any]:
             result["app_fields"]["type"] = "request"
             result["app_fields"]["method"] = tokens[0]
             result["app_fields"]["path"] = tokens[1]
+            
+            # Expose raw URI for Decoder (keeps full request target including query string)
+            result["app_fields"]["uri"] = tokens[1]
+            
             result["app_fields"]["version"] = tokens[2]
         else:
             raise ValueError(f"Malformed HTTP request line: {start_line}")
@@ -67,15 +85,38 @@ def parse_http(raw_bytes: bytes) -> Dict[str, Any]:
             continue
         if ':' in line:
             key, val = line.split(':', 1)
-            key = key.strip()
-            val = val.strip()
-            result["app_fields"]["headers"][key] = val
             
-            if key.lower() == 'content-length':
+            key_clean = key.strip()
+            val_clean = val.strip()
+            
+            # Keep every header line untouched; normalization belongs to the Preprocessor (Bai 2)
+            result["app_fields"]["header_pairs"].append([key_clean, val_clean])
+            
+            # Same behavior as Bai 1: keyed by the original header name, last value wins
+            result["app_fields"]["headers"][key_clean] = val_clean
+            
+            # Lowercase only for the internal matching below
+            key_lower = key_clean.lower()
+            
+            # Check for Content-Length
+            if key_lower == 'content-length':
                 try:
-                    content_length = int(val)
+                    content_length = int(val_clean)
+                    result["app_fields"]["content_length"] = content_length
                 except ValueError:
                     pass
+            
+            # Extract Content-Type and Charset (Bai 2)
+            elif key_lower == 'content-type':
+                ct_parts = [p.strip() for p in val_clean.split(';')]
+                if ct_parts:
+                    # An empty Content-Type value stays None instead of ''
+                    result["app_fields"]["content_type"] = ct_parts[0].lower() or None
+                    # Extract charset if available
+                    for part in ct_parts[1:]:
+                        if part.lower().startswith("charset="):
+                            result["app_fields"]["charset"] = part.split('=', 1)[1].strip('"\'').lower()
+                            break
 
     # 3. Parse Body (if any)
     if body_bytes:
@@ -93,12 +134,12 @@ if __name__ == "__main__":
     
     # Test 1: Valid HTTP Request with Body
     print("\n--- Valid HTTP Request ---")
-    req_payload = b"POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Length: 27\r\n\r\nusername=admin&password=123"
+    req_payload = b"POST /api/login?token=abc HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded; charset=utf-8\r\nContent-Length: 27\r\n\r\nusername=admin&password=123"
     pprint.pprint(parse_http(req_payload))
     
     # Test 2: Valid HTTP Response
     print("\n--- Valid HTTP Response ---")
-    resp_payload = b"HTTP/1.1 404 Not Found\r\nServer: nginx\r\n\r\n<html>Page Not Found</html>"
+    resp_payload = b"HTTP/1.1 404 Not Found\r\nServer: nginx\r\nContent-Type: text/html\r\n\r\n<html>Page Not Found</html>"
     pprint.pprint(parse_http(resp_payload))
     
     # Test 3: Malformed HTTP Response
