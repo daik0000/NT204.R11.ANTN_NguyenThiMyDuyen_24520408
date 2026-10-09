@@ -32,7 +32,9 @@ def _resolve_charset(hint: str) -> Optional[Tuple[str, str]]:
     return (codec_name, label) if label else None
 
 
-def decode_bytes(data: bytes, charset_hint: Optional[str] = None) -> Tuple[str, str, Dict[str, Any]]:
+def decode_bytes(
+    data: bytes, charset_hint: Optional[str] = None, detect_binary: bool = True
+) -> Tuple[str, str, Dict[str, Any]]:
     """
     Safely decodes bytes into a text string.
     
@@ -40,13 +42,15 @@ def decode_bytes(data: bytes, charset_hint: Optional[str] = None) -> Tuple[str, 
     - decode_status: "OK", "PARTIAL" (if invalid bytes were replaced), or "SKIPPED" (if empty/binary).
     - info_dict for PARTIAL: invalid_byte_count (exact number of undecodable BYTES) and
       first_invalid_offset (byte offset of the first one).
+    - detect_binary: set to False for short, attacker-controlled values (URL components) that must
+      never be dropped as "binary" (e.g. a value made only of %00 bytes).
     """
     if not data:
         return "", "SKIPPED", {"reason": "empty_payload"}
 
     # Heuristic: DENSE NUL bytes indicate binary data (e.g., images, compiled files).
     # This prevents the decoder from trying to convert binary files into meaningless text.
-    if data.count(b"\x00") / len(data) >= BINARY_NUL_RATIO:
+    if detect_binary and data.count(b"\x00") / len(data) >= BINARY_NUL_RATIO:
         return "", "SKIPPED", {"reason": "binary_content"}
 
     info: Dict[str, Any] = {}
