@@ -26,7 +26,8 @@ class FlowTracker:
     def update(self, event: Any) -> Any:
         """
         Processes a single IDSEvent to route it to the correct Flow, tracking
-        direction, establishing new flows, and maintaining the LRU table.
+        direction, establishing new flows, maintaining the LRU table, and
+        updating flow statistics.
         """
         ts = getattr(event, "timestamp", None)
         ts_ok = type(ts) in (int, float) and math.isfinite(ts)
@@ -60,11 +61,10 @@ class FlowTracker:
 
         # 3. Attach or Create Flow
         if entry is None:
-            # Create a new Flow dataclass. Counters/states will be updated fully in the next commit.
             flow = Flow(
                 flow_id=make_flow_id(key, ts),
                 protocol=trans_proto,
-                application_protocol=getattr(event, "app_protocol", None),
+                application_protocol=None, # Will be resolved in stat updates below
                 endpoint_a={"ip": src_ip, "port": src_port},
                 endpoint_b={"ip": dst_ip, "port": dst_port},
                 start_time=ts,
@@ -88,15 +88,51 @@ class FlowTracker:
             entry = FlowEntry(flow)
             self.table.add(key, entry)
         else:
-            # Existing flow: Touch it in the LRU cache (O(1)) and update last_seen
+            # Existing flow: Touch it in the LRU cache (O(1))
             self.table.touch(key)
-            if ts > entry.flow.last_seen:
-                entry.flow.last_seen = ts
 
         # 4. Determine Direction and tag Event
         direction = direction_of(entry.flow.endpoint_a, src_ip, src_port)
         event.flow_id = entry.flow.flow_id
         event.direction = direction
+
+        # 5. Update Flow Statistics
+        flow = entry.flow
+        
+        # 5.1 Timestamps (min/max gracefully handle out-of-order PCAP packets)
+        flow.start_time = min(flow.start_time, ts)
+        flow.last_seen = max(flow.last_seen, ts)
+        
+        # 5.2 Safely extract byte counts (T06/T14 defensive programming)
+        raw_len = getattr(event, "raw_length", 0)
+        # Rejects None, bool, float (NaN/inf), str, and negatives
+        if type(raw_len) is not int or raw_len < 0:
+            raw_len = 0
+            
+        payload_bytes = getattr(event, "payload", None)
+        payload_len = len(payload_bytes) if isinstance(payload_bytes, bytes) else 0
+
+        # 5.3 Increment global and directional counters
+        flow.packet_count += 1
+        flow.byte_count += raw_len
+        flow.payload_byte_count += payload_len
+
+        if direction == "forward":
+            flow.fwd_packet_count += 1
+            flow.fwd_byte_count += raw_len
+        else:
+            flow.bwd_packet_count += 1
+            flow.bwd_byte_count += raw_len
+            
+        # 5.4 Application Protocol Resolution (Specific > UNKNOWN > None)
+        event_app = getattr(event, "app_protocol", None)
+        if event_app is not None:
+            event_app_upper = str(event_app).upper()
+            curr_app = flow.application_protocol
+            
+            # Upgrade protocol if currently None, or if currently UNKNOWN and new one is specific
+            if curr_app is None or (curr_app == "UNKNOWN" and event_app_upper != "UNKNOWN"):
+                flow.application_protocol = event_app_upper
 
         return event
 
@@ -104,7 +140,6 @@ class FlowTracker:
         """
         Finalizes a flow, removes it from the active table, and triggers the export callback safely.
         """
-        # Reconstruct the routing key safely to remove it from the OrderedDict
         key = make_key(
             entry.flow.protocol,
             entry.flow.endpoint_a["ip"],
@@ -113,15 +148,13 @@ class FlowTracker:
             entry.flow.endpoint_b["port"]
         )
         
-        # Remove from table
         removed_entry = self.table.remove(key)
         if removed_entry is None:
-            return  # Safety fallback in case it was already purged
+            return  
             
         flow = removed_entry.flow
         flow.close_reason = reason
         
-        # Trigger export callback safely
         if self.on_export:
             try:
                 self.on_export(flow)
