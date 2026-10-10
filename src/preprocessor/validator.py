@@ -1,6 +1,8 @@
 import time
 import math
+import ipaddress
 from typing import Any, Tuple, List, Set
+from src.preprocessor.aliases import PROTO_ALIASES
 
 # Valid TCP flags as defined in standards
 _VALID_TCP_FLAGS = {"SYN", "ACK", "FIN", "RST", "PSH", "URG", "ECE", "CWR"}
@@ -49,9 +51,19 @@ def validate(event: Any, cfg: Any) -> Tuple[str, List[str]]:
     if net_proto_raw:
         net_proto_upper = str(net_proto_raw).upper()
         # Accept both "IPV4" and the "IP" alias (Normalizer will unify them)
-        if net_proto_upper not in ("IPV4", "IP"):
+        net_proto_std = PROTO_ALIASES.get(net_proto_upper.lower(), net_proto_upper)
+        if net_proto_std != "IPv4":
             is_partial = True
             reasons.add(f"unsupported_network:{net_proto_raw}")
+
+    for ip_field in ("src_ip", "dst_ip"):
+        value = getattr(event, ip_field, None)
+        if isinstance(value, str) and value:
+            try:
+                ipaddress.ip_address(value.strip())
+            except ValueError:
+                is_invalid = True
+                reasons.add(f"invalid_{ip_field}")
 
     # 5. Transport Protocol & Port Requirements
     trans_proto_raw = getattr(event, "transport_protocol", None)
