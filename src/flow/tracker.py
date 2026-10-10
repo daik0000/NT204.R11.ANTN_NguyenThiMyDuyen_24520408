@@ -1,9 +1,11 @@
 import logging
 import math
 from typing import Any, Callable, Optional
+
 from src.models.flow import Flow
 from src.flow.flow_key import make_key, direction_of, make_flow_id
 from src.flow.flow_table import FlowTable, FlowEntry
+from src.flow.tcp_state import next_state, normalize_flags
 from src.utils.safe import safe_stage
 
 logger = logging.getLogger(__name__)
@@ -12,22 +14,18 @@ class FlowTracker:
     def __init__(self, cfg: Any, on_export: Optional[Callable[[Flow], None]] = None):
         """
         Initializes the FlowTracker.
-        
-        Args:
-            cfg: The configuration dictionary.
-            on_export: Callback function triggered when a flow is evicted/exported.
         """
-        self.cfg = cfg
+        self.cfg = cfg if isinstance(cfg, dict) else {}
         self.on_export = on_export
         self.table = FlowTable()
-        self.clock = 0.0  # High-water mark for event-time processing
+        self.clock = 0.0  
 
     @safe_stage("flow_tracker", event_index=1)
     def update(self, event: Any) -> Any:
         """
         Processes a single IDSEvent to route it to the correct Flow, tracking
         direction, establishing new flows, maintaining the LRU table, and
-        updating flow statistics.
+        updating flow statistics & TCP states.
         """
         ts = getattr(event, "timestamp", None)
         ts_ok = type(ts) in (int, float) and math.isfinite(ts)
@@ -39,7 +37,6 @@ class FlowTracker:
         src_port = getattr(event, "src_port", None)
         dst_port = getattr(event, "dst_port", None)
 
-        # Skip if event is invalid, malformed, missing 5-tuple, or has infinite timestamp.
         if (
             prep_status == "invalid" or 
             not ts_ok or
@@ -49,9 +46,10 @@ class FlowTracker:
         ):
             event.flow_id = None
             event.direction = None
+            event.flow_state = None
             return event
             
-        # 1. Update internal event-time clock watermark using valid timestamps only
+        # 1. Update internal event-time clock watermark
         ts = float(ts)
         self.clock = max(self.clock, ts)
 
@@ -59,12 +57,27 @@ class FlowTracker:
         key = make_key(trans_proto, src_ip, src_port, dst_ip, dst_port)
         entry = self.table.get(key)
 
-        # 3. Attach or Create Flow
+        # Extract flags early for port reuse detection and state machine reuse
+        t_fields = getattr(event, "transport_fields", None)
+        flags = t_fields.get("flags") if isinstance(t_fields, dict) else []
+        flag_set = normalize_flags(flags)
+
+        # 3. Port Reuse Detection
+        # If a pure SYN (no ACK) arrives for an existing flow that is already terminated,
+        # we flush the old flow and treat this as a brand new connection.
+        if entry is not None and trans_proto == "TCP":
+            if "SYN" in flag_set and "ACK" not in flag_set and entry.flow.state in ("CLOSED", "RESET"):
+                # CRITICAL: Export the old flow BEFORE creating the new one to prevent
+                # _export_flow from accidentally purging the newly created entry via the shared key.
+                self._export_flow(entry, "port_reuse")
+                entry = None  # Force creation of a new flow below
+
+        # 4. Attach or Create Flow
         if entry is None:
             flow = Flow(
                 flow_id=make_flow_id(key, ts),
                 protocol=trans_proto,
-                application_protocol=None, # Will be resolved in stat updates below
+                application_protocol=None, 
                 endpoint_a={"ip": src_ip, "port": src_port},
                 endpoint_b={"ip": dst_ip, "port": dst_port},
                 start_time=ts,
@@ -80,7 +93,6 @@ class FlowTracker:
                 ack_count=0,
                 fin_count=0,
                 rst_count=0,
-                # UDP defaults to ACTIVE. TCP starts as HANDSHAKE until state machine runs.
                 state="ACTIVE" if trans_proto == "UDP" else "HANDSHAKE",
                 close_reason=None,
                 midstream=False
@@ -88,31 +100,66 @@ class FlowTracker:
             entry = FlowEntry(flow)
             self.table.add(key, entry)
         else:
-            # Existing flow: Touch it in the LRU cache (O(1))
             self.table.touch(key)
 
-        # 4. Determine Direction and tag Event
+        # 5. Determine Direction and tag Event
         direction = direction_of(entry.flow.endpoint_a, src_ip, src_port)
         event.flow_id = entry.flow.flow_id
         event.direction = direction
 
-        # 5. Update Flow Statistics
+        # 6. TCP State Machine Integration (BEFORE packet_count increment)
+        is_first_packet = (entry.flow.packet_count == 0)
+        
+        if trans_proto == "TCP":
+            # Extract tracking config from correct section
+            tracker_cfg = self.cfg.get("flow", {})
+            
+            ctx = {
+                "synack_seen": entry.synack_seen,
+                "synack_dir": entry.synack_dir,
+                "fin_fwd": entry.fin_fwd,
+                "fin_bwd": entry.fin_bwd,
+                "midstream": entry.flow.midstream,
+                "tcp_close_requires_final_ack": tracker_cfg.get("tcp_close_requires_final_ack", False)
+            }
+            
+            old_state = entry.flow.state
+            new_state = next_state(
+                current_state=old_state, 
+                flags=list(flag_set),
+                direction=direction, 
+                ctx=ctx, 
+                is_first_packet=is_first_packet
+            )
+            
+            # Synchronize context back
+            entry.synack_seen = ctx.get("synack_seen", False)
+            entry.synack_dir = ctx.get("synack_dir")
+            entry.fin_fwd = ctx.get("fin_fwd", False)
+            entry.fin_bwd = ctx.get("fin_bwd", False)
+            entry.flow.midstream = ctx.get("midstream", False)
+            
+            if new_state != old_state:
+                entry.flow.state = new_state
+                entry.state_changed_at = ts
+                
+            event.flow_state = new_state
+        else:
+            event.flow_state = entry.flow.state
+
+        # 7. Update Flow Statistics
         flow = entry.flow
         
-        # 5.1 Timestamps (min/max gracefully handle out-of-order PCAP packets)
         flow.start_time = min(flow.start_time, ts)
         flow.last_seen = max(flow.last_seen, ts)
         
-        # 5.2 Safely extract byte counts (T06/T14 defensive programming)
         raw_len = getattr(event, "raw_length", 0)
-        # Rejects None, bool, float (NaN/inf), str, and negatives
         if type(raw_len) is not int or raw_len < 0:
             raw_len = 0
             
         payload_bytes = getattr(event, "payload", None)
         payload_len = len(payload_bytes) if isinstance(payload_bytes, bytes) else 0
 
-        # 5.3 Increment global and directional counters
         flow.packet_count += 1
         flow.byte_count += raw_len
         flow.payload_byte_count += payload_len
@@ -123,14 +170,24 @@ class FlowTracker:
         else:
             flow.bwd_packet_count += 1
             flow.bwd_byte_count += raw_len
+
+        # 7.4 TCP Flag Counters
+        if trans_proto == "TCP":
+            if "SYN" in flag_set:
+                flow.syn_count += 1
+            if "ACK" in flag_set:
+                flow.ack_count += 1
+            if "FIN" in flag_set:
+                flow.fin_count += 1
+            if "RST" in flag_set:
+                flow.rst_count += 1
             
-        # 5.4 Application Protocol Resolution (Specific > UNKNOWN > None)
+        # 7.5 Application Protocol Resolution (Specific > UNKNOWN > None)
         event_app = getattr(event, "app_protocol", None)
         if event_app is not None:
             event_app_upper = str(event_app).upper()
             curr_app = flow.application_protocol
             
-            # Upgrade protocol if currently None, or if currently UNKNOWN and new one is specific
             if curr_app is None or (curr_app == "UNKNOWN" and event_app_upper != "UNKNOWN"):
                 flow.application_protocol = event_app_upper
 

@@ -15,6 +15,7 @@ class FlowEntry:
         self.fin_fwd: bool = False
         self.fin_bwd: bool = False
         self.synack_seen: bool = False
+        self.synack_dir: Optional[str] = None   # direction of the SYN/ACK; the opposite side completes the handshake
         self.state_changed_at: float = flow.start_time
 
 
@@ -64,6 +65,5 @@ class FlowTable:
         if not self._table:
             return None
         
-        # In an OrderedDict, the first item is the oldest inserted/touched
         oldest_key = next(iter(self._table))
         return oldest_key, self._table[oldest_key]
