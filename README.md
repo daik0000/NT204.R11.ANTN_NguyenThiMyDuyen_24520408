@@ -72,9 +72,9 @@ Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua
 | #19 | Mở rộng `IDSEvent`, schema `Flow`, bổ sung HTTP/SMTP parser cho Decoder | Hoàn thành |
 | #20 | Decoder | Hoàn thành |
 | #22 | Preprocessor | Hoàn thành |
-| #23 | Flow Tracker: key, direction, flow table, thống kê cơ bản | Đang triển khai |
-| #24 | Theo dõi kết nối TCP | (Chưa bắt đầu) |
-| #25 | UDP flow, idle timeout, giải phóng flow hết hạn | (Chưa bắt đầu) |
+| #23 | Flow Tracker: key, direction, flow table, thống kê cơ bản | Hoàn thành |
+| #24 | Theo dõi kết nối TCP | Hoàn thành |
+| #25 | UDP flow, idle timeout, giải phóng flow hết hạn | Đang triển khai |
 | #26 | Tích hợp pipeline, `flows.jsonl`, CLI | (Chưa bắt đầu) |
 | #27 | Chạy test T01-T14 + Regression test Bài 1 | (Chưa bắt đầu) |
 
