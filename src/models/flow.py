@@ -48,7 +48,19 @@ class Flow:
     ack_count: int = 0
     fin_count: int = 0
     rst_count: int = 0
+    
     state: FlowState
+    """
+    Current state of the connection flow:
+    - UDP: 
+      * 'ACTIVE': Stateless protocol.
+    - TCP:
+      * 'HANDSHAKE': Connection establishment in progress (SYN seen).
+      * 'ESTABLISHED': Connection successfully established, transmitting data.
+      * 'CLOSING': Connection termination initiated (at least one FIN seen).
+      * 'CLOSED': Connection terminated safely (FINs from both sides seen).
+      * 'RESET': Connection aborted abruptly (RST seen).
+    """
 
     # --- Auxiliary ---
     close_reason: Optional[CloseReason] = None
