@@ -12,15 +12,11 @@ class FlowTracker:
     def __init__(self, cfg: Any, on_export: Optional[Callable[[Flow], None]] = None):
         """
         Initializes the FlowTracker.
-        
-        Args:
-            cfg: The configuration dictionary.
-            on_export: Callback function triggered when a flow is evicted/exported.
         """
         self.cfg = cfg
         self.on_export = on_export
         self.table = FlowTable()
-        self.clock = 0.0  # High-water mark for event-time processing
+        self.clock = 0.0  
 
     @safe_stage("flow_tracker", event_index=1)
     def update(self, event: Any) -> Any:
@@ -64,7 +60,7 @@ class FlowTracker:
             flow = Flow(
                 flow_id=make_flow_id(key, ts),
                 protocol=trans_proto,
-                application_protocol=None, # Will be resolved in stat updates below
+                application_protocol=None, 
                 endpoint_a={"ip": src_ip, "port": src_port},
                 endpoint_b={"ip": dst_ip, "port": dst_port},
                 start_time=ts,
@@ -88,7 +84,6 @@ class FlowTracker:
             entry = FlowEntry(flow)
             self.table.add(key, entry)
         else:
-            # Existing flow: Touch it in the LRU cache (O(1))
             self.table.touch(key)
 
         # 4. Determine Direction and tag Event
@@ -99,13 +94,12 @@ class FlowTracker:
         # 5. Update Flow Statistics
         flow = entry.flow
         
-        # 5.1 Timestamps (min/max gracefully handle out-of-order PCAP packets)
+        # 5.1 Timestamps
         flow.start_time = min(flow.start_time, ts)
         flow.last_seen = max(flow.last_seen, ts)
         
-        # 5.2 Safely extract byte counts (T06/T14 defensive programming)
+        # 5.2 Safely extract byte counts
         raw_len = getattr(event, "raw_length", 0)
-        # Rejects None, bool, float (NaN/inf), str, and negatives
         if type(raw_len) is not int or raw_len < 0:
             raw_len = 0
             
@@ -123,14 +117,32 @@ class FlowTracker:
         else:
             flow.bwd_packet_count += 1
             flow.bwd_byte_count += raw_len
+
+        # 5.4 TCP Flag Counters (Defensive programming against T06)
+        if trans_proto == "TCP":
+            t_fields = getattr(event, "transport_fields", None)
+            flags = t_fields.get("flags") if isinstance(t_fields, dict) else []
             
-        # 5.4 Application Protocol Resolution (Specific > UNKNOWN > None)
+            if not isinstance(flags, (list, tuple, set, frozenset)):
+                flags = []
+                
+            flag_set = {str(f).upper() for f in flags}
+            
+            if "SYN" in flag_set:
+                flow.syn_count += 1
+            if "ACK" in flag_set:
+                flow.ack_count += 1
+            if "FIN" in flag_set:
+                flow.fin_count += 1
+            if "RST" in flag_set:
+                flow.rst_count += 1
+            
+        # 5.5 Application Protocol Resolution (Specific > UNKNOWN > None)
         event_app = getattr(event, "app_protocol", None)
         if event_app is not None:
             event_app_upper = str(event_app).upper()
             curr_app = flow.application_protocol
             
-            # Upgrade protocol if currently None, or if currently UNKNOWN and new one is specific
             if curr_app is None or (curr_app == "UNKNOWN" and event_app_upper != "UNKNOWN"):
                 flow.application_protocol = event_app_upper
 
