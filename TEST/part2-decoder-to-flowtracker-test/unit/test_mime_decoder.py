@@ -98,4 +98,4 @@ def test_final_period_of_the_text_is_not_mistaken_for_the_end_of_data_marker():
 
 def test_real_end_of_data_marker_is_still_removed():
     assert _decode(b"Hello\r\n.\r\n", cte="7bit")["value"] == "Hello"
-    assert _decode(b"Hello\n.\n", cte="7bit")["value"] == "Hello"
+    assert _decode(b"Hello\n.\n", cte="7bit")["value"] == "Hello" 

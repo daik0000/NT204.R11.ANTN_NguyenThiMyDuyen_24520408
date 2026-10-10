@@ -134,4 +134,4 @@ def decode_event(event: Any, cfg: Any) -> Any:
                 
         event.decode_status = worst_status
 
-    return event
+    return event 
