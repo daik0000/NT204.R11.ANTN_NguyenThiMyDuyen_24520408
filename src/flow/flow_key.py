@@ -1,4 +1,5 @@
 from typing import Tuple
+import hashlib
 
 def make_key(protocol: str, src_ip: str, src_port: int, dst_ip: str, dst_port: int) -> Tuple[str, Tuple[str, int], Tuple[str, int]]:
     """
@@ -51,3 +52,18 @@ def direction_of(endpoint_a: dict, src_ip: str, src_port: int) -> str:
         return "forward"
         
     return "backward"
+
+def make_flow_id(key: Tuple[str, Tuple[str, int], Tuple[str, int]], start_time: float) -> str:
+    """
+    Generates a deterministic identifier for a flow from its canonical 5-tuple and
+    microsecond-precision start time (reproducible across runs, distinct on port reuse).
+    """
+    proto, ep1, ep2 = key
+    ip1, port1 = ep1
+    ip2, port2 = ep2
+
+    # Integer microseconds avoid float repr differences across platforms/versions.
+    start_us = int(round(start_time * 1_000_000))
+
+    raw_str = f"{proto}|{ip1}:{port1}|{ip2}:{port2}|{start_us}"
+    return hashlib.blake2b(raw_str.encode("utf-8"), digest_size=8).hexdigest()
