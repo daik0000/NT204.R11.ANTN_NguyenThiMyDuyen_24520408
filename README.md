@@ -40,6 +40,28 @@ Capture -> Parser -> Decoder -> Preprocessor -> Flow Tracker -> (Feature Extract
 
 Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua packet đều cấu hình được qua `config/settings.yaml`; một packet lỗi không được làm dừng chương trình.
 
+**Decoder — hành vi chính** (`src/decoder/`)
+
+- Chạy trên `event.payload` (bytes gốc, chỉ ở bộ nhớ) và **không bao giờ sửa `app_fields`**; kết quả nằm ở `decoded_fields`: `uri`, `body`, `form_params` (HTTP), `body` (SMTP DATA).
+- Giải mã ở mức byte (percent-decode rồi mới giải mã ký tự), nên byte không hợp lệ được **đếm chính xác** (`invalid_byte_count`, `first_invalid_offset`) và event chỉ bị `PARTIAL`, không crash.
+- HTML entity chỉ áp dụng cho body/giá trị form có content-type trong `decoder.html_entity_content_types`, **không bao giờ áp dụng cho URI**.
+- Body nhị phân (`image/*`, `application/octet-stream`, `zip`…) -> `SKIPPED`; vượt `decoder.max_payload_bytes` -> cắt, `PARTIAL` và thêm `truncated_by_limit` vào `reason`.
+- `decode_status` của event là trạng thái xấu nhất của các field (`FAILED > PARTIAL > OK > SKIPPED`); event `MALFORMED` hoặc `decoder.enabled=false` giữ `decode_status=None`.
+
+**Preprocessor — hành vi chính** (`src/preprocessor/`)
+
+| Mức | Ý nghĩa |
+|---|---|
+| `valid` | Đủ field bắt buộc, giá trị hợp lệ |
+| `partial` | Dùng được nhưng suy giảm: protocol không hỗ trợ (ARP/IPv6/ICMP), thiếu transport, port 0, `decode_status` là `PARTIAL`/`FAILED` |
+| `invalid` | Thiếu hoặc sai field bắt buộc (port ngoài miền, IP sai định dạng, timestamp `NaN`/tương lai quá ngưỡng, cờ TCP lạ, event `MALFORMED`) |
+
+- Luồng: **validate -> normalize (bỏ qua nếu `invalid`) -> điền mặc định -> áp policy.** Chuẩn hoá không bao giờ che giấu dữ liệu rác.
+- Chuẩn hoá protocol, IP, timestamp được làm **tại chỗ** trên field cấp event; dữ liệu trong `app_fields` giữ nguyên và bản chuẩn hoá nằm ở key riêng: `headers_normalized`, `path_normalized`, `host_normalized`, `queries_normalized`, `answers_normalized`. `/../` và `//` trong path được giữ nguyên để IDS còn thấy dấu hiệu path traversal.
+- `processing_action`: `invalid` -> `flagged` (hoặc `dropped` nếu `invalid_policy: drop`); protocol không hỗ trợ -> `flagged` (hoặc `skipped` nếu `unsupported_policy: skip`); còn lại `normalized` nếu có giá trị được chuẩn hoá, `defaults_filled` nếu chỉ bổ sung mặc định, ngược lại `none`. Event `skipped`/`dropped` không vào Flow Tracker và không được ghi log.
+- Nếu chính stage Preprocessor gặp lỗi bất ngờ, event ra với `preprocess_status="invalid"`, `processing_action="flagged"` và `error_info.layer="preprocessor"`.
+- Ba policy độc lập: `unknown_policy` (Bài 1, tầng Application), `unsupported_policy` (`mark`/`skip`), `invalid_policy` (`flag`/`drop`).
+
 **Test bắt buộc:** 14 test case T01-T14 (HTTP URL decode, HTML entity, SMTP Base64/QP, invalid bytes, normalization, missing field, TCP handshake, bidirectional flow, TCP close, UDP query/response, concurrent flows, idle timeout, statistics, malformed event).
 
 **Tiến độ hiện tại**
@@ -48,9 +70,9 @@ Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua
 |---|---|---|
 | #18 | Scaffold, gom test Bài 1 vào `TEST/part1-packet-capture-test/`, config loader, PCAP builder | Hoàn thành |
 | #19 | Mở rộng `IDSEvent`, schema `Flow`, bổ sung HTTP/SMTP parser cho Decoder | Hoàn thành |
-| #20 | Decoder | (Chưa bắt đầu) |
-| #22 | Preprocessor | (Chưa bắt đầu) |
-| #23 | Flow Tracker: key, direction, flow table, thống kê cơ bản | (Chưa bắt đầu) |
+| #20 | Decoder | Hoàn thành |
+| #22 | Preprocessor | Hoàn thành |
+| #23 | Flow Tracker: key, direction, flow table, thống kê cơ bản | Đang triển khai |
 | #24 | Theo dõi kết nối TCP | (Chưa bắt đầu) |
 | #25 | UDP flow, idle timeout, giải phóng flow hết hạn | (Chưa bắt đầu) |
 | #26 | Tích hợp pipeline, `flows.jsonl`, CLI | (Chưa bắt đầu) |
@@ -116,7 +138,7 @@ Mỗi gói tin sau khi qua pipeline sẽ được chuẩn hóa thành một dòn
 Các nhóm field bổ sung ở Bài 2 (đều có giá trị mặc định, nên code Bài 1 không bị ảnh hưởng):
 
 - **Decoder**: `decoded_fields` (dữ liệu đã giải mã theo từng nguồn; dữ liệu gốc trong `app_fields` luôn được giữ nguyên), `decode_status` (`OK`/`PARTIAL`/`FAILED`/`SKIPPED`; `None` = Decoder chưa chạy)
-- **Preprocessor**: `timestamp_iso` (UTC ISO-8601), `preprocess_status` (`valid`/`partial`/`invalid`; `None` = chưa chạy), `processing_action` (`none`/`normalized`/`defaults_filled`/`flagged`/`skipped`/`dropped`), `reason` (danh sách mã lý do, `[]` khi không có)
+- **Preprocessor**: `timestamp_iso` (UTC ISO-8601), `preprocess_status` (`valid`/`partial`/`invalid`; `None` = chưa chạy), `processing_action` (`none`/`normalized`/`defaults_filled`/`flagged`/`skipped`/`dropped`), `reason` (danh sách mã lý do, `[]` khi không có; ví dụ `missing_src_ip`, `invalid_src_port`, `unsupported_transport:ICMP`, `malformed_parse_tcp`, `truncated_by_limit`)
 - **Flow Tracker**: `flow_id`, `direction` (`forward`/`backward`), `flow_state` (trạng thái flow ngay sau khi xử lý packet này)
 - **Chỉ trong bộ nhớ**: `payload` - bytes nguyên văn của tầng ứng dụng, dành cho Decoder (`b""` khi packet không có dữ liệu ứng dụng, `None` khi không tới được tầng transport). Field này **không bao giờ được ghi ra log** (`to_dict()` loại bỏ nó).
 
@@ -125,6 +147,7 @@ Các nhóm field bổ sung ở Bài 2 (đều có giá trị mặc định, nên
 Một số `app_fields` được bổ sung để Decoder dùng trực tiếp:
 - **HTTP**: `uri` (request-target nguyên văn, chưa giải mã), `header_pairs` (từng dòng header `[tên, giá trị]` giữ nguyên chữ hoa/thường, thứ tự và các dòng trùng), `body_offset` (vị trí bắt đầu body trong `payload`; `None` nếu chưa thấy dòng trống kết thúc header), `content_type`, `charset`, `content_length`.
 - **SMTP DATA** (nội dung thư): `type="data"`, `mime_headers` (tên header viết thường), `body_offset`. Hai loại cũ vẫn là `type="command"` và `type="response"`.
+- **Bản chuẩn hoá do Preprocessor thêm** (cạnh dữ liệu gốc, không ghi đè): `headers_normalized` (tên header viết thường, header trùng gộp bằng `, `, riêng `set-cookie` giữ dạng list), `path_normalized`, `host_normalized`, và với DNS `queries_normalized`, `answers_normalized`.
 
 Đây là format dữ liệu duy nhất mà các module phía sau được phép sử dụng - không truy cập trực tiếp object của thư viện capture (Scapy). Kết quả được ghi liên tục ra file JSON Lines (mặc định `output/events.jsonl`) qua `src/logging/jsonl_logger.py`.
 
