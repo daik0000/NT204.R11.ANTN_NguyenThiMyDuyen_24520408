@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Set
 
 # TCP States Constants
 TCP_STATE_HANDSHAKE = "HANDSHAKE"
@@ -6,6 +6,12 @@ TCP_STATE_ESTABLISHED = "ESTABLISHED"
 TCP_STATE_CLOSING = "CLOSING"
 TCP_STATE_CLOSED = "CLOSED"
 TCP_STATE_RESET = "RESET"
+
+def normalize_flags(flags: Any) -> Set[str]:
+    """Extracts and normalizes a collection of TCP flags into a standardized upper-case set."""
+    if isinstance(flags, (list, tuple, set, frozenset)):
+        return {str(f).upper() for f in flags}
+    return set()
 
 def next_state(
     current_state: str, 
@@ -20,8 +26,7 @@ def next_state(
     
     Priority strictly enforced: RST > SYN > FIN > ACK
     """
-    # Accept only a real collection of flag names; a str would be matched by substring.
-    flag_set = {str(f).upper() for f in flags} if isinstance(flags, (list, tuple, set, frozenset)) else set()
+    flag_set = normalize_flags(flags)
 
     has_rst = "RST" in flag_set
     has_syn = "SYN" in flag_set
