@@ -57,7 +57,22 @@ class FlowTracker:
         key = make_key(trans_proto, src_ip, src_port, dst_ip, dst_port)
         entry = self.table.get(key)
 
-        # 3. Attach or Create Flow
+        # Extract flags early for port reuse detection and state machine reuse
+        t_fields = getattr(event, "transport_fields", None)
+        flags = t_fields.get("flags") if isinstance(t_fields, dict) else []
+        flag_set = normalize_flags(flags)
+
+        # 3. Port Reuse Detection
+        # If a pure SYN (no ACK) arrives for an existing flow that is already terminated,
+        # we flush the old flow and treat this as a brand new connection.
+        if entry is not None and trans_proto == "TCP":
+            if "SYN" in flag_set and "ACK" not in flag_set and entry.flow.state in ("CLOSED", "RESET"):
+                # CRITICAL: Export the old flow BEFORE creating the new one to prevent
+                # _export_flow from accidentally purging the newly created entry via the shared key.
+                self._export_flow(entry, "port_reuse")
+                entry = None  # Force creation of a new flow below
+
+        # 4. Attach or Create Flow
         if entry is None:
             flow = Flow(
                 flow_id=make_flow_id(key, ts),
@@ -87,17 +102,12 @@ class FlowTracker:
         else:
             self.table.touch(key)
 
-        # 4. Determine Direction and tag Event
+        # 5. Determine Direction and tag Event
         direction = direction_of(entry.flow.endpoint_a, src_ip, src_port)
         event.flow_id = entry.flow.flow_id
         event.direction = direction
 
-        # Extract flags early for reuse
-        t_fields = getattr(event, "transport_fields", None)
-        flags = t_fields.get("flags") if isinstance(t_fields, dict) else []
-        flag_set = normalize_flags(flags)
-
-        # 5. TCP State Machine Integration (BEFORE packet_count increment)
+        # 6. TCP State Machine Integration (BEFORE packet_count increment)
         is_first_packet = (entry.flow.packet_count == 0)
         
         if trans_proto == "TCP":
@@ -116,7 +126,7 @@ class FlowTracker:
             old_state = entry.flow.state
             new_state = next_state(
                 current_state=old_state, 
-                flags=list(flag_set),  # Convert set back to list for next_state safety
+                flags=list(flag_set),
                 direction=direction, 
                 ctx=ctx, 
                 is_first_packet=is_first_packet
@@ -137,7 +147,7 @@ class FlowTracker:
         else:
             event.flow_state = entry.flow.state
 
-        # 6. Update Flow Statistics
+        # 7. Update Flow Statistics
         flow = entry.flow
         
         flow.start_time = min(flow.start_time, ts)
@@ -161,7 +171,7 @@ class FlowTracker:
             flow.bwd_packet_count += 1
             flow.bwd_byte_count += raw_len
 
-        # 6.4 TCP Flag Counters (Reusing extracted flag_set)
+        # 7.4 TCP Flag Counters
         if trans_proto == "TCP":
             if "SYN" in flag_set:
                 flow.syn_count += 1
@@ -172,7 +182,7 @@ class FlowTracker:
             if "RST" in flag_set:
                 flow.rst_count += 1
             
-        # 6.5 Application Protocol Resolution (Specific > UNKNOWN > None)
+        # 7.5 Application Protocol Resolution (Specific > UNKNOWN > None)
         event_app = getattr(event, "app_protocol", None)
         if event_app is not None:
             event_app_upper = str(event_app).upper()
