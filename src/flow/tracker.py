@@ -12,6 +12,7 @@ from src.utils.safe import safe_stage
 logger = logging.getLogger(__name__)
 
 DEFAULT_SWEEP_INTERVAL_SEC = 1.0  # must match settings.yaml (flow.sweep_interval_sec)
+DEFAULT_MAX_ACTIVE_FLOWS = 100000  # must match settings.yaml (flow.max_active_flows)
 
 
 def _get_sweep_interval(flow_cfg: Any) -> float:
@@ -20,6 +21,14 @@ def _get_sweep_interval(flow_cfg: Any) -> float:
     if type(v) in (int, float) and math.isfinite(v) and v > 0:
         return float(v)
     return DEFAULT_SWEEP_INTERVAL_SEC
+
+
+def _get_max_active_flows(flow_cfg: Any) -> int:
+    """Read a positive integer max_active_flows from flow_cfg, else default."""
+    v = flow_cfg.get("max_active_flows") if isinstance(flow_cfg, dict) else None
+    if type(v) is int and v > 0:
+        return v
+    return DEFAULT_MAX_ACTIVE_FLOWS
 
 
 class FlowTracker:
@@ -130,6 +139,18 @@ class FlowTracker:
 
         # 4. Attach or Create Flow
         if entry is None:
+            # 4.1 Evict least-recently-active flow(s) if table is at capacity (O(1) per eviction)
+            max_flows = _get_max_active_flows(flow_cfg)
+            while len(self.table) >= max_flows:
+                oldest_pair = self.table.oldest()
+                if oldest_pair is None:
+                    break
+                oldest_key, oldest_entry = oldest_pair
+                before = len(self.table)
+                self._export_flow(oldest_entry, "evicted")
+                if len(self.table) >= before:  # defensive: never spin forever on an inconsistent entry
+                    self.table.remove(oldest_key)
+
             flow = Flow(
                 flow_id=make_flow_id(key, ts),
                 protocol=trans_proto,
