@@ -1,9 +1,11 @@
 import logging
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 from pathlib import Path
 import yaml
 
-from src.models.event import IDSEvent 
+from src.models.event import IDSEvent
+from src.models.flow import Flow
+from src.flow.tracker import FlowTracker
 from src.parsers.network.ipv4_parser import parse_ipv4
 from src.parsers.transport.tcp_parser import parse_tcp
 from src.parsers.transport.udp_parser import parse_udp
@@ -15,9 +17,10 @@ from src.parsers.application.smtp_parser import parse_smtp
 logger = logging.getLogger(__name__)
 
 IP_PROTO_TO_NAME = {
-    6: "TCP", 
+    6: "TCP",
     17: "UDP"
 }
+
 
 def load_unknown_policy(config_path: str = "config/settings.yaml") -> str:
     try:
@@ -27,16 +30,25 @@ def load_unknown_policy(config_path: str = "config/settings.yaml") -> str:
             return "log"
         with open(path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        return str(config.get("unknown_policy", "log")).lower()
+        if isinstance(config, dict):
+            return str(config.get("unknown_policy", "log")).lower()
+        return "log"
     except Exception as e:
         logger.warning("Failed to read unknown_policy from %s: %s. Using default: 'log'", config_path, e)
         return "log"
-        
+
+
 UNKNOWN_POLICY = load_unknown_policy()
 
-def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
+
+def _parse_packet_layers(
+    timestamp: float,
+    raw_bytes: bytes,
+    packet_id: int,
+    unknown_policy: str = "log"
+) -> IDSEvent:
     """
-    Orchestrates the packet analysis pipeline from L3 up to L7.
+    Core L3 -> L7 packet parsing logic from Part 1.
     Applies the Fall-through principle: an error at any layer finalizes the event at that layer.
     """
     event_dict: Dict[str, Any] = {
@@ -62,7 +74,7 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
     # 1. NETWORK LAYER
     net_result = parse_ipv4(raw_bytes)
     net_status = net_result.get("status")
-    
+
     if net_status == "UNKNOWN":
         event_dict["status"] = "UNKNOWN"
         return IDSEvent(**event_dict)
@@ -79,17 +91,17 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
         "dst_ip": net_result.get("dst_ip"),
         "network_fields": network_fields
     })
-    
+
     transport_payload = net_result.get("transport_payload", b"")
     event_dict["payload_length"] = len(transport_payload)
-    
+
     ip_proto_number = network_fields.get("ip_proto_number")
     transport_proto = IP_PROTO_TO_NAME.get(ip_proto_number)
 
     if not transport_payload or not transport_proto:
         return IDSEvent(**event_dict)
 
-    # 2. TRANSPORT LAYER 
+    # 2. TRANSPORT LAYER
     trans_result = parse_tcp(transport_payload) if transport_proto == "TCP" else parse_udp(transport_payload)
 
     if trans_result.get("status") == "MALFORMED":
@@ -103,7 +115,7 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
         "dst_port": trans_result.get("dst_port"),
         "transport_fields": trans_result.get("transport_fields")
     })
-    
+
     app_payload = trans_result.get("app_payload", b"")
 
     # Keep the exact application-layer bytes in memory for the Decoder (never written to logs).
@@ -115,14 +127,14 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
 
     # 3. DETECTOR (L7 Labeling)
     app_proto, det_method = detect_application_protocol(
-        payload=app_payload, 
-        src_port=event_dict["src_port"], 
+        payload=app_payload,
+        src_port=event_dict["src_port"],
         dst_port=event_dict["dst_port"],
         packet_id=packet_id
     )
-    
+
     if app_proto == "UNKNOWN":
-        if UNKNOWN_POLICY == "skip":
+        if unknown_policy == "skip":
             event_dict["status"] = "IGNORED"
             # Do not set error_info since this is not an error; keep it as None
         else:
@@ -152,3 +164,57 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
             event_dict["app_protocol"] = app_result.get("app_protocol", app_proto)
 
     return IDSEvent(**event_dict)
+
+
+class Pipeline:
+    """
+    Stateful packet processing pipeline holding the FlowTracker and output loggers.
+    """
+    def __init__(
+        self,
+        cfg: Optional[Dict[str, Any]] = None,
+        event_logger: Optional[Any] = None,
+        flow_logger: Optional[Any] = None,
+    ):
+        self.cfg: Dict[str, Any] = cfg if isinstance(cfg, dict) else {}
+        self.event_logger = event_logger
+        self.flow_logger = flow_logger
+        self.flow_tracker = FlowTracker(self.cfg, on_export=self._on_flow_export)
+
+    def _on_flow_export(self, flow: Flow) -> None:
+        """Callback invoked when a flow is exported from FlowTracker."""
+        if self.flow_logger is not None:
+            if hasattr(self.flow_logger, "write"):
+                self.flow_logger.write(flow)
+            elif hasattr(self.flow_logger, "log"):
+                self.flow_logger.log(flow)
+            elif callable(self.flow_logger):
+                self.flow_logger(flow)
+
+    def _get_unknown_policy(self) -> str:
+        if "unknown_policy" in self.cfg and self.cfg["unknown_policy"] is not None:
+            return str(self.cfg["unknown_policy"]).lower()
+        return str(UNKNOWN_POLICY).lower()
+
+    def process(self, timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
+        """
+        Processes a single packet through the pipeline.
+        """
+        return _parse_packet_layers(
+            timestamp=timestamp,
+            raw_bytes=raw_bytes,
+            packet_id=packet_id,
+            unknown_policy=self._get_unknown_policy(),
+        )
+
+
+def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
+    """
+    Thin backward-compatible wrapper around the packet parsing pipeline for Part 1.
+    """
+    return _parse_packet_layers(
+        timestamp=timestamp,
+        raw_bytes=raw_bytes,
+        packet_id=packet_id,
+        unknown_policy=str(UNKNOWN_POLICY).lower(),
+    )
