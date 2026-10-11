@@ -6,6 +6,7 @@ from src.models.flow import Flow
 from src.flow.flow_key import make_key, direction_of, make_flow_id
 from src.flow.flow_table import FlowTable, FlowEntry
 from src.flow.tcp_state import next_state, normalize_flags
+from src.flow.timeout import is_expired, get_close_reason
 from src.utils.safe import safe_stage
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,10 @@ class FlowTracker:
         ts = float(ts)
         self.clock = max(self.clock, ts)
 
+        # Extract 'flow' configuration section safely
+        raw_flow_cfg = self.cfg.get("flow", {})
+        flow_cfg = raw_flow_cfg if isinstance(raw_flow_cfg, dict) else {}
+
         # 2. Key Generation & Table Lookup
         key = make_key(trans_proto, src_ip, src_port, dst_ip, dst_port)
         entry = self.table.get(key)
@@ -62,15 +67,16 @@ class FlowTracker:
         flags = t_fields.get("flags") if isinstance(t_fields, dict) else []
         flag_set = normalize_flags(flags)
 
-        # 3. Port Reuse Detection
-        # If a pure SYN (no ACK) arrives for an existing flow that is already terminated,
-        # we flush the old flow and treat this as a brand new connection.
-        if entry is not None and trans_proto == "TCP":
-            if "SYN" in flag_set and "ACK" not in flag_set and entry.flow.state in ("CLOSED", "RESET"):
-                # CRITICAL: Export the old flow BEFORE creating the new one to prevent
-                # _export_flow from accidentally purging the newly created entry via the shared key.
+        # 3. Lazy Expiration & Port Reuse Detection
+        if entry is not None:
+            # 3.1 Lazy expiration: check if the existing flow timed out before this packet arrived
+            if is_expired(entry, ts, flow_cfg):
+                self._export_flow(entry, get_close_reason(entry))
+                entry = None
+            # 3.2 Port reuse: pure SYN (no ACK) arriving on an unexpired CLOSED/RESET flow
+            elif trans_proto == "TCP" and "SYN" in flag_set and "ACK" not in flag_set and entry.flow.state in ("CLOSED", "RESET"):
                 self._export_flow(entry, "port_reuse")
-                entry = None  # Force creation of a new flow below
+                entry = None
 
         # 4. Attach or Create Flow
         if entry is None:
@@ -111,16 +117,13 @@ class FlowTracker:
         is_first_packet = (entry.flow.packet_count == 0)
         
         if trans_proto == "TCP":
-            # Extract tracking config from correct section
-            tracker_cfg = self.cfg.get("flow", {})
-            
             ctx = {
                 "synack_seen": entry.synack_seen,
                 "synack_dir": entry.synack_dir,
                 "fin_fwd": entry.fin_fwd,
                 "fin_bwd": entry.fin_bwd,
                 "midstream": entry.flow.midstream,
-                "tcp_close_requires_final_ack": tracker_cfg.get("tcp_close_requires_final_ack", False)
+                "tcp_close_requires_final_ack": bool(flow_cfg.get("tcp_close_requires_final_ack", False))
             }
             
             old_state = entry.flow.state
