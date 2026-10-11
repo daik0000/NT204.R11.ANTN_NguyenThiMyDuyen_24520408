@@ -7,6 +7,10 @@ from src.preprocessor.aliases import PROTO_ALIASES
 # Valid TCP flags as defined in standards
 _VALID_TCP_FLAGS = {"SYN", "ACK", "FIN", "RST", "PSH", "URG", "ECE", "CWR"}
 
+def _as_dict(value: Any) -> dict:
+    """Returns the value if it is a dict, otherwise {} (a wrongly typed container is repaired later by fill_defaults)."""
+    return value if isinstance(value, dict) else {}
+    
 def validate(event: Any, cfg: Any) -> Tuple[str, List[str]]:
     """
     Validates an IDSEvent to determine its data quality level.
@@ -71,7 +75,8 @@ def validate(event: Any, cfg: Any) -> Tuple[str, List[str]]:
 
     if not trans_proto_raw:
         # Determine specific reason using IP Protocol number if transport is missing
-        net_fields = getattr(event, "network_fields", None) or {}
+        net_fields = _as_dict(getattr(event, "network_fields", None))
+
         ip_proto = net_fields.get("ip_proto_number")
         
         if ip_proto in (6, 17, None):
@@ -141,7 +146,7 @@ def validate(event: Any, cfg: Any) -> Tuple[str, List[str]]:
 
     # 8. TCP Flags Validation
     if trans_proto_upper == "TCP":
-        t_fields = getattr(event, "transport_fields", None) or {}
+        t_fields = _as_dict(getattr(event, "transport_fields", None)) 
         flags = t_fields.get("flags")
         if flags is not None:
             if not isinstance(flags, list):
