@@ -46,6 +46,13 @@ def fake_layers(monkeypatch):
     monkeypatch.setattr(pl, "parse_dns", lambda p: {"status": "MALFORMED", "error_info": {"layer": "application"}})
     monkeypatch.setattr(pl, "parse_smtp", lambda p: None)
 
+    def neutral_preprocessor(event, cfg):
+        event.preprocess_status, event.processing_action = "valid", "none"
+        return event
+
+    monkeypatch.setattr(pl, "decode_event", lambda event, cfg: event)
+    monkeypatch.setattr(pl, "preprocess_event", neutral_preprocessor)
+
 
 RAW = [b"Xt", b"Xt!", b"XtGET /a", b"XtZZZ", b"Xu", b"XuDns", b"U", b"M"]
 
@@ -56,6 +63,10 @@ def test_pipeline_process_matches_process_packet(monkeypatch, raw, policy):
     monkeypatch.setattr(pl, "UNKNOWN_POLICY", policy)
     a = dataclasses.asdict(process_packet(1.0, raw, 7))
     b = dataclasses.asdict(Pipeline({"unknown_policy": policy}).process(1.0, raw, 7))
+
+    for key in ("preprocess_status", "processing_action"):   # the only fields the Part 2 stages add here
+        b.pop(key), a.pop(key)
+
     assert a == b
 
 

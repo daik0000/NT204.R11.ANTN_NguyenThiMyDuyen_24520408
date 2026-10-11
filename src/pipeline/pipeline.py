@@ -5,6 +5,8 @@ import yaml
 
 from src.models.event import IDSEvent
 from src.models.flow import Flow
+from src.decoder.decoder import decode_event
+from src.preprocessor.preprocessor import preprocess_event
 from src.flow.tracker import FlowTracker
 from src.parsers.network.ipv4_parser import parse_ipv4
 from src.parsers.transport.tcp_parser import parse_tcp
@@ -39,6 +41,12 @@ def load_unknown_policy(config_path: str = "config/settings.yaml") -> str:
 
 
 UNKNOWN_POLICY = load_unknown_policy()
+
+
+def _record_error(event: IDSEvent, layer: str, detail: str) -> None:
+    """Record a stage failure as {"layer", "detail"}; an earlier error is never overwritten."""
+    if getattr(event, "error_info", None) is None:
+        event.error_info = {"layer": layer, "detail": detail}
 
 
 def _parse_packet_layers(
@@ -169,6 +177,7 @@ def _parse_packet_layers(
 class Pipeline:
     """
     Stateful packet processing pipeline holding the FlowTracker and output loggers.
+    Executes stages sequentially: Parser -> Decoder -> Preprocessor -> FlowTracker.
     """
     def __init__(
         self,
@@ -196,16 +205,67 @@ class Pipeline:
             return str(self.cfg["unknown_policy"]).lower()
         return str(UNKNOWN_POLICY).lower()
 
+    def _apply_preprocessor_error_fallback(self, event: IDSEvent, exc: Optional[Exception] = None) -> None:
+        """Conservative verdict when the Preprocessor fails: invalid + flagged (never silently trusted)."""
+        event.preprocess_status = "invalid"
+        event.processing_action = "flagged"
+        if not isinstance(getattr(event, "reason", None), list):
+            event.reason = []
+        if "preprocessor_error" not in event.reason:
+            event.reason.append("preprocessor_error")
+        if exc is not None:
+            _record_error(event, "preprocessor", f"{type(exc).__name__}: {exc}")
+
     def process(self, timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
         """
-        Processes a single packet through the pipeline.
+        Processes a single packet through Parser -> Decoder -> Preprocessor.
+        Never allows an exception to escape; each stage failure is isolated.
         """
-        return _parse_packet_layers(
-            timestamp=timestamp,
-            raw_bytes=raw_bytes,
-            packet_id=packet_id,
-            unknown_policy=self._get_unknown_policy(),
-        )
+        # Stage 1: Packet Parser (L3 -> L7)
+        try:
+            event = _parse_packet_layers(
+                timestamp=timestamp,
+                raw_bytes=raw_bytes,
+                packet_id=packet_id,
+                unknown_policy=self._get_unknown_policy(),
+            )
+        except Exception as e:
+            logger.warning("Stage 'parser' failed on packet %s: %s", packet_id, e)
+            raw_len = len(raw_bytes) if isinstance(raw_bytes, (bytes, bytearray, memoryview)) else 0
+            event = IDSEvent(
+                packet_id=packet_id,
+                timestamp=timestamp,
+                raw_length=raw_len,
+                payload_length=0,
+                status="MALFORMED",
+                error_info={"layer": "parser", "detail": f"{type(e).__name__}: {e}"},
+            )
+
+        # Stage 2: Decoder (Skipped if packet is MALFORMED)
+        if getattr(event, "status", None) != "MALFORMED":
+            try:
+                res = decode_event(event, self.cfg)
+                if isinstance(res, IDSEvent):
+                    event = res
+            except Exception as e:
+                logger.warning("Stage 'decoder' failed on packet %s: %s", packet_id, e)
+                event.decode_status = None
+                _record_error(event, "decoder", f"{type(e).__name__}: {e}")
+        else:
+            event.decode_status = None
+
+        # Stage 3: Preprocessor (Always runs, including on MALFORMED events)
+        try:
+            res = preprocess_event(event, self.cfg)
+            if isinstance(res, IDSEvent):
+                event = res
+            if getattr(event, "preprocess_status", None) is None:
+                self._apply_preprocessor_error_fallback(event)
+        except Exception as e:
+            logger.warning("Stage 'preprocessor' failed on packet %s: %s", packet_id, e)
+            self._apply_preprocessor_error_fallback(event, e)
+
+        return event
 
 
 def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
