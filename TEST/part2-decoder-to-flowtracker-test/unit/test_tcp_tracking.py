@@ -49,11 +49,18 @@ def test_t09_normal_close_ends_closed_and_late_ack_stays_in_the_flow():
 
 
 def test_t09_reset_is_terminal_and_half_close_stays_closing():
-    t, evs = run([pkt(["ACK"], "C", 0), pkt(["RST"], "S", 1), pkt(["ACK"], "C", 2), pkt(["SYN"], "C", 3)])
-    assert [e.flow_state for e in evs] == ["ESTABLISHED", "RESET", "RESET", "RESET"]
-    assert flow_of(t).rst_count == 1
-    _, evs = run([pkt(["ACK"], "C", 0), pkt(["FIN", "ACK"], "C", 1), pkt(["ACK"], "S", 1.1)])
+    t, evs = run([pkt(["ACK"], "C", 0), pkt(["RST"], "S", 1), pkt(["ACK"], "C", 2), pkt(["PSH", "ACK"], "C", 3)])
+    assert [e.flow_state for e in evs] == ["ESTABLISHED", "RESET", "RESET", "RESET"] and flow_of(t).rst_count == 1
+    assert len({e.flow_id for e in evs}) == 1          # late non-SYN packets stay in the reset flow
+    t, evs = run([pkt(["ACK"], "C", 0), pkt(["FIN", "ACK"], "C", 1), pkt(["ACK"], "S", 1.1)])
     assert evs[-1].flow_state == "CLOSING"
+
+
+def test_t09_pure_syn_after_reset_starts_a_new_flow():
+    t, evs = run([pkt(["ACK"], "C", 0), pkt(["RST"], "S", 1), pkt(["SYN"], "C", 3)])
+    assert [e.flow_state for e in evs] == ["ESTABLISHED", "RESET", "HANDSHAKE"]
+    assert evs[2].flow_id != evs[1].flow_id            # port reuse: old flow exported, new flow created
+    assert flow_of(t).syn_count == 1
 
 
 def test_scan_shapes():
