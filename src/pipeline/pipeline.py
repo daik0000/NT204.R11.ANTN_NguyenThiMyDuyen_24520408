@@ -190,31 +190,48 @@ class Pipeline:
         self.flow_logger = flow_logger
         self.flow_tracker = FlowTracker(self.cfg, on_export=self._on_flow_export)
 
-    def _emit_to_sink(self, sink: Any, record: Any) -> None:
-        """Safely writes a record (IDSEvent or Flow) to a configured logger/sink."""
-        if sink is None:
+    def _on_flow_export(self, flow: Flow) -> None:
+        """
+        Callback invoked when a flow is exported from FlowTracker.
+        Writes the exported Flow record as a single JSONL line to flow_logger.
+        Never raises exceptions so FlowTracker.update() / flush() is never interrupted.
+        """
+        if self.flow_logger is None:
             return
         try:
-            if hasattr(sink, "write_event") and isinstance(record, IDSEvent):
-                sink.write_event(record)
-            elif hasattr(sink, "write_flow") and isinstance(record, Flow):
-                sink.write_flow(record)
-            elif hasattr(sink, "write"):
-                sink.write(record)
-            elif hasattr(sink, "log"):
-                sink.log(record)
-            elif callable(sink):
-                sink(record)
+            if hasattr(self.flow_logger, "log"):
+                self.flow_logger.log(flow)
+            elif hasattr(self.flow_logger, "log_flow"):
+                self.flow_logger.log_flow(flow)
+            elif hasattr(self.flow_logger, "write_flow"):
+                self.flow_logger.write_flow(flow)
+            elif hasattr(self.flow_logger, "write"):
+                self.flow_logger.write(flow)
+            elif callable(self.flow_logger):
+                self.flow_logger(flow)
         except Exception as e:
-            logger.warning("Failed to write record to logger: %s", e)
-
-    def _on_flow_export(self, flow: Flow) -> None:
-        """Callback invoked when a flow is exported from FlowTracker."""
-        self._emit_to_sink(self.flow_logger, flow)
+            logger.warning("Failed to write exported flow %s to flow_logger: %s", getattr(flow, "flow_id", None), e)
 
     def _write_event(self, event: IDSEvent) -> None:
-        """Writes an IDSEvent to the configured event_logger."""
-        self._emit_to_sink(self.event_logger, event)
+        """
+        Writes a processed IDSEvent to event_logger.
+        Never raises exceptions so Pipeline.process() is never interrupted.
+        """
+        if self.event_logger is None:
+            return
+        try:
+            if hasattr(self.event_logger, "log"):
+                self.event_logger.log(event)
+            elif hasattr(self.event_logger, "log_event"):
+                self.event_logger.log_event(event)
+            elif hasattr(self.event_logger, "write_event"):
+                self.event_logger.write_event(event)
+            elif hasattr(self.event_logger, "write"):
+                self.event_logger.write(event)
+            elif callable(self.event_logger):
+                self.event_logger(event)
+        except Exception as e:
+            logger.warning("Failed to write event %s to event_logger: %s", getattr(event, "packet_id", None), e)
 
     def _get_unknown_policy(self) -> str:
         if "unknown_policy" in self.cfg and self.cfg["unknown_policy"] is not None:
@@ -239,6 +256,22 @@ class Pipeline:
         except Exception as e:
             logger.warning("Stage 'flow_tracker.flush' failed: %s", e)
             return 0
+
+    def close(self) -> None:
+        """Flushes remaining flows and closes any attached loggers."""
+        self.flush()
+        for sink in (self.event_logger, self.flow_logger):
+            if sink is not None and hasattr(sink, "close"):
+                try:
+                    sink.close()
+                except Exception as e:
+                    logger.warning("Failed to close logger: %s", e)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def process(self, timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
         """
@@ -313,6 +346,7 @@ class Pipeline:
             event.flow_state = None
             _record_error(event, "flow_tracker", f"{type(e).__name__}: {e}")
 
+        # Stage 5: Event Logging
         # unknown_policy=skip (status == "IGNORED") only decides that the event is not logged.
         if getattr(event, "status", None) != "IGNORED":
             self._write_event(event)
