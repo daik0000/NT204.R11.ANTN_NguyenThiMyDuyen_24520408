@@ -188,6 +188,12 @@ class Pipeline:
         self.cfg: Dict[str, Any] = cfg if isinstance(cfg, dict) else {}
         self.event_logger = event_logger
         self.flow_logger = flow_logger
+        self.flows_exported: int = 0
+        self.preprocess_counts: Dict[str, int] = {
+            "valid": 0,
+            "partial": 0,
+            "invalid": 0,
+        }
         self.flow_tracker = FlowTracker(self.cfg, on_export=self._on_flow_export)
 
     def _on_flow_export(self, flow: Flow) -> None:
@@ -196,6 +202,7 @@ class Pipeline:
         Writes the exported Flow record as a single JSONL line to flow_logger.
         Never raises exceptions so FlowTracker.update() / flush() is never interrupted.
         """
+        self.flows_exported += 1
         if self.flow_logger is None:
             return
         try:
@@ -322,6 +329,10 @@ class Pipeline:
         except Exception as e:
             logger.warning("Stage 'preprocessor' failed on packet %s: %s", packet_id, e)
             self._apply_preprocessor_error_fallback(event, e)
+
+        prep_status = getattr(event, "preprocess_status", None)
+        if prep_status in self.preprocess_counts:
+            self.preprocess_counts[prep_status] += 1
 
         # Policy Enforcement: skipped (unsupported_policy=skip) or dropped (invalid_policy=drop)
         # Do NOT update flow tracker and do NOT write to events.jsonl.
