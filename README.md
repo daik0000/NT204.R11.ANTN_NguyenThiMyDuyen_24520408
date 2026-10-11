@@ -74,9 +74,35 @@ Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua
 | #22 | Preprocessor | Hoàn thành |
 | #23 | Flow Tracker: key, direction, flow table, thống kê cơ bản | Hoàn thành |
 | #24 | Theo dõi kết nối TCP | Hoàn thành |
-| #25 | UDP flow, idle timeout, giải phóng flow hết hạn | Đang triển khai |
-| #26 | Tích hợp pipeline, `flows.jsonl`, CLI | (Chưa bắt đầu) |
+| #25 | UDP flow, idle timeout, giải phóng flow hết hạn | Hoàn thành |
+| #26 | Tích hợp pipeline, `flows.jsonl`, CLI | Đang triển khai |
 | #27 | Chạy test T01-T14 + Regression test Bài 1 | (Chưa bắt đầu) |
+
+### Vòng đời flow: timeout, hết hạn, giải phóng
+
+Mọi mốc thời gian dùng **event-time** (timestamp của packet, không phải đồng hồ máy): `clock` là mốc lớn nhất đã thấy từ các event theo dõi được (event `invalid` hoặc timestamp không hữu hạn không làm `clock` tiến). Tất cả khoá nằm trong section `flow` của `config/settings.yaml`; thiếu hoặc sai giá trị thì dùng mặc định bên dưới (trùng với file cấu hình), không làm dừng chương trình.
+
+| Loại flow / trạng thái | Khoá cấu hình | Mặc định (giây) | `close_reason` khi hết hạn |
+|---|---|---|---|
+| UDP | `udp_idle_timeout_sec` | 60 | `idle_timeout` |
+| TCP `HANDSHAKE` | `tcp_handshake_timeout_sec` | 30 | `handshake_timeout` |
+| TCP `CLOSED` / `RESET` (giữ để hứng ACK/retransmit muộn) | `tcp_closed_linger_sec` | 10 | `tcp_closed` / `tcp_reset` |
+| TCP `ESTABLISHED` / `CLOSING` | `tcp_idle_timeout_sec` | 300 | `idle_timeout` |
+
+- **Biên hết hạn:** flow hết hạn khi `now - last_seen > timeout` (lớn hơn **hẳn**; đúng bằng timeout thì chưa hết hạn). `duration` của flow hết hạn là `last_seen - start_time`, không cộng thời gian chờ.
+- **Hết hạn lazy:** khi một packet đến, nếu flow cùng 5-tuple đã quá hạn thì flow cũ được xuất trước rồi packet mở flow mới (hai phiên không bị trộn dù chưa đến lượt quét).
+- **Quét định kỳ (`sweep`):** chạy khi `clock` tiến thêm ít nhất `sweep_interval_sec` (mặc định 1.0) kể từ lần quét trước; duyệt toàn bảng O(n), gom danh sách hết hạn trước rồi mới xuất.
+- **Tái dùng cổng:** SYN thuần (không ACK) tới flow đang `CLOSED`/`RESET` còn trong thời gian giữ -> flow cũ xuất với `port_reuse`, flow mới bắt đầu. Quá thời gian giữ thì flow cũ xuất `tcp_closed`/`tcp_reset`.
+- **Giới hạn bộ nhớ:** bảng đầy (`max_active_flows`, mặc định 100000) thì flow lâu chưa hoạt động nhất bị xuất với `evicted` trước khi thêm flow mới.
+- **Flush khi thoát:** `flush()` xuất mọi flow còn lại, từ cũ đến mới: `CLOSED`/`RESET` giữ `tcp_closed`/`tcp_reset`, còn lại là `flush`. Flow hết hạn nhưng chưa kịp quét lúc kết thúc cũng nhận `flush`.
+
+### Giới hạn đã biết
+
+- Event-time chỉ tiến khi có packet mới: ở chế độ `--interface`, nếu traffic ngừng hẳn thì flow chưa hết hạn cho tới packet kế tiếp hoặc lúc thoát (`flush`). Hướng mở rộng: `capture_live` phát tín hiệu heartbeat khi hàng đợi rỗng.
+- `sweep` duyệt toàn bảng O(n) mỗi `sweep_interval_sec`; timeout khác nhau theo loại flow nên LRU thuần không đủ để dừng sớm. Hướng cải tiến: hàng đợi ưu tiên theo thời điểm hết hạn.
+- Packet đến muộn hơn `clock` (không đúng thứ tự) không làm flow hết hạn và không kéo `clock` lùi; flow đã bị xuất rồi không được "mở lại".
+- Parse từng packet độc lập: không ghép lại TCP, không giải nén gzip/chunked, không giải mã TLS.
+- Nhánh dự phòng khi xuất flow (key trong bảng không khớp key dựng lại) chỉ xoá entry chứ không gọi callback; tình huống này không xảy ra khi bảng chỉ được ghi qua `update()`. Hướng cải tiến: truyền key của bảng vào `_export_flow`.
 
 ## Cách chạy
 
