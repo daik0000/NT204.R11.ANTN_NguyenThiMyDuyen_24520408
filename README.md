@@ -76,7 +76,7 @@ Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua
 | #24 | Theo dõi kết nối TCP | Hoàn thành |
 | #25 | UDP flow, idle timeout, giải phóng flow hết hạn | Hoàn thành |
 | #26 | Tích hợp pipeline, `flows.jsonl`, CLI | Hoàn thành |
-| #27 | Chạy test T01-T14 + Regression test Bài 1 | Đang triển khai |
+| #27 | Chạy test T01-T14 + Regression test Bài 1 | Hoàn thành |
 
 ### Vòng đời flow: timeout, hết hạn, giải phóng
 
