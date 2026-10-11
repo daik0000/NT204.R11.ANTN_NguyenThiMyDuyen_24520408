@@ -82,6 +82,34 @@ class FlowTracker:
         self.last_sweep = min(eval_time, self.clock)  # a far-future manual "now" must not stall periodic sweeps
         return len(expired_list)
 
+    def flush(self) -> int:
+        """
+        Exports all remaining flows in the active table on shutdown (end of PCAP or Ctrl+C),
+        ordered from oldest (least recently active) to newest.
+
+        Flows already in CLOSED or RESET state retain 'tcp_closed' / 'tcp_reset';
+        all other active flows receive close_reason='flush'.
+
+        Returns:
+            The number of flows flushed.
+        """
+        # Collect all remaining entries first (snapshot is naturally ordered oldest-first)
+        remaining: List[Tuple[Any, FlowEntry, str]] = []
+        for key, entry in self.table.items():
+            if entry.flow.state in ("CLOSED", "RESET"):
+                reason = get_close_reason(entry)
+            else:
+                reason = "flush"
+            remaining.append((key, entry, reason))
+
+        for key, entry, reason in remaining:
+            before = len(self.table)
+            self._export_flow(entry, reason)
+            if len(self.table) >= before:  # defensive cleanup if key reconstruction mismatched
+                self.table.remove(key)
+
+        return len(remaining)
+
     @safe_stage("flow_tracker", event_index=1)
     def update(self, event: Any) -> Any:
         """
