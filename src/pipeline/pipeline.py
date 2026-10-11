@@ -1,9 +1,13 @@
 import logging
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 from pathlib import Path
 import yaml
 
-from src.models.event import IDSEvent 
+from src.models.event import IDSEvent
+from src.models.flow import Flow
+from src.decoder.decoder import decode_event
+from src.preprocessor.preprocessor import preprocess_event
+from src.flow.tracker import FlowTracker
 from src.parsers.network.ipv4_parser import parse_ipv4
 from src.parsers.transport.tcp_parser import parse_tcp
 from src.parsers.transport.udp_parser import parse_udp
@@ -15,9 +19,10 @@ from src.parsers.application.smtp_parser import parse_smtp
 logger = logging.getLogger(__name__)
 
 IP_PROTO_TO_NAME = {
-    6: "TCP", 
+    6: "TCP",
     17: "UDP"
 }
+
 
 def load_unknown_policy(config_path: str = "config/settings.yaml") -> str:
     try:
@@ -27,16 +32,31 @@ def load_unknown_policy(config_path: str = "config/settings.yaml") -> str:
             return "log"
         with open(path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        return str(config.get("unknown_policy", "log")).lower()
+        if isinstance(config, dict):
+            return str(config.get("unknown_policy", "log")).lower()
+        return "log"
     except Exception as e:
         logger.warning("Failed to read unknown_policy from %s: %s. Using default: 'log'", config_path, e)
         return "log"
-        
+
+
 UNKNOWN_POLICY = load_unknown_policy()
 
-def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
+
+def _record_error(event: IDSEvent, layer: str, detail: str) -> None:
+    """Record a stage failure as {"layer", "detail"}; an earlier error is never overwritten."""
+    if getattr(event, "error_info", None) is None:
+        event.error_info = {"layer": layer, "detail": detail}
+
+
+def _parse_packet_layers(
+    timestamp: float,
+    raw_bytes: bytes,
+    packet_id: int,
+    unknown_policy: str = "log"
+) -> IDSEvent:
     """
-    Orchestrates the packet analysis pipeline from L3 up to L7.
+    Core L3 -> L7 packet parsing logic from Part 1.
     Applies the Fall-through principle: an error at any layer finalizes the event at that layer.
     """
     event_dict: Dict[str, Any] = {
@@ -62,7 +82,7 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
     # 1. NETWORK LAYER
     net_result = parse_ipv4(raw_bytes)
     net_status = net_result.get("status")
-    
+
     if net_status == "UNKNOWN":
         event_dict["status"] = "UNKNOWN"
         return IDSEvent(**event_dict)
@@ -79,17 +99,17 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
         "dst_ip": net_result.get("dst_ip"),
         "network_fields": network_fields
     })
-    
+
     transport_payload = net_result.get("transport_payload", b"")
     event_dict["payload_length"] = len(transport_payload)
-    
+
     ip_proto_number = network_fields.get("ip_proto_number")
     transport_proto = IP_PROTO_TO_NAME.get(ip_proto_number)
 
     if not transport_payload or not transport_proto:
         return IDSEvent(**event_dict)
 
-    # 2. TRANSPORT LAYER 
+    # 2. TRANSPORT LAYER
     trans_result = parse_tcp(transport_payload) if transport_proto == "TCP" else parse_udp(transport_payload)
 
     if trans_result.get("status") == "MALFORMED":
@@ -103,7 +123,7 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
         "dst_port": trans_result.get("dst_port"),
         "transport_fields": trans_result.get("transport_fields")
     })
-    
+
     app_payload = trans_result.get("app_payload", b"")
 
     # Keep the exact application-layer bytes in memory for the Decoder (never written to logs).
@@ -115,14 +135,14 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
 
     # 3. DETECTOR (L7 Labeling)
     app_proto, det_method = detect_application_protocol(
-        payload=app_payload, 
-        src_port=event_dict["src_port"], 
+        payload=app_payload,
+        src_port=event_dict["src_port"],
         dst_port=event_dict["dst_port"],
         packet_id=packet_id
     )
-    
+
     if app_proto == "UNKNOWN":
-        if UNKNOWN_POLICY == "skip":
+        if unknown_policy == "skip":
             event_dict["status"] = "IGNORED"
             # Do not set error_info since this is not an error; keep it as None
         else:
@@ -152,3 +172,206 @@ def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEve
             event_dict["app_protocol"] = app_result.get("app_protocol", app_proto)
 
     return IDSEvent(**event_dict)
+
+
+class Pipeline:
+    """
+    Stateful packet processing pipeline holding the FlowTracker and output loggers.
+    Executes stages sequentially: Parser -> Decoder -> Preprocessor -> FlowTracker.
+    """
+    def __init__(
+        self,
+        cfg: Optional[Dict[str, Any]] = None,
+        event_logger: Optional[Any] = None,
+        flow_logger: Optional[Any] = None,
+    ):
+        self.cfg: Dict[str, Any] = cfg if isinstance(cfg, dict) else {}
+        self.event_logger = event_logger
+        self.flow_logger = flow_logger
+        self.flows_exported: int = 0
+        self.preprocess_counts: Dict[str, int] = {
+            "valid": 0,
+            "partial": 0,
+            "invalid": 0,
+        }
+        self.flow_tracker = FlowTracker(self.cfg, on_export=self._on_flow_export)
+
+    def _on_flow_export(self, flow: Flow) -> None:
+        """
+        Callback invoked when a flow is exported from FlowTracker.
+        Writes the exported Flow record as a single JSONL line to flow_logger.
+        Never raises exceptions so FlowTracker.update() / flush() is never interrupted.
+        """
+        self.flows_exported += 1
+        if self.flow_logger is None:
+            return
+        try:
+            if hasattr(self.flow_logger, "log"):
+                self.flow_logger.log(flow)
+            elif hasattr(self.flow_logger, "log_flow"):
+                self.flow_logger.log_flow(flow)
+            elif hasattr(self.flow_logger, "write_flow"):
+                self.flow_logger.write_flow(flow)
+            elif hasattr(self.flow_logger, "write"):
+                self.flow_logger.write(flow)
+            elif callable(self.flow_logger):
+                self.flow_logger(flow)
+        except Exception as e:
+            logger.warning("Failed to write exported flow %s to flow_logger: %s", getattr(flow, "flow_id", None), e)
+
+    def _write_event(self, event: IDSEvent) -> None:
+        """
+        Writes a processed IDSEvent to event_logger.
+        Never raises exceptions so Pipeline.process() is never interrupted.
+        """
+        if self.event_logger is None:
+            return
+        try:
+            if hasattr(self.event_logger, "log"):
+                self.event_logger.log(event)
+            elif hasattr(self.event_logger, "log_event"):
+                self.event_logger.log_event(event)
+            elif hasattr(self.event_logger, "write_event"):
+                self.event_logger.write_event(event)
+            elif hasattr(self.event_logger, "write"):
+                self.event_logger.write(event)
+            elif callable(self.event_logger):
+                self.event_logger(event)
+        except Exception as e:
+            logger.warning("Failed to write event %s to event_logger: %s", getattr(event, "packet_id", None), e)
+
+    def _get_unknown_policy(self) -> str:
+        if "unknown_policy" in self.cfg and self.cfg["unknown_policy"] is not None:
+            return str(self.cfg["unknown_policy"]).lower()
+        return str(UNKNOWN_POLICY).lower()
+
+    def _apply_preprocessor_error_fallback(self, event: IDSEvent, exc: Optional[Exception] = None) -> None:
+        """Conservative verdict when the Preprocessor fails: invalid + flagged (never silently trusted)."""
+        event.preprocess_status = "invalid"
+        event.processing_action = "flagged"
+        if not isinstance(getattr(event, "reason", None), list):
+            event.reason = []
+        if "preprocessor_error" not in event.reason:
+            event.reason.append("preprocessor_error")
+        if exc is not None:
+            _record_error(event, "preprocessor", f"{type(exc).__name__}: {exc}")
+
+    def flush(self) -> int:
+        """Flushes all remaining active flows from the FlowTracker."""
+        try:
+            return self.flow_tracker.flush()
+        except Exception as e:
+            logger.warning("Stage 'flow_tracker.flush' failed: %s", e)
+            return 0
+
+    def close(self) -> None:
+        """Flushes remaining flows and closes any attached loggers."""
+        self.flush()
+        for sink in (self.event_logger, self.flow_logger):
+            if sink is not None and hasattr(sink, "close"):
+                try:
+                    sink.close()
+                except Exception as e:
+                    logger.warning("Failed to close logger: %s", e)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def process(self, timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
+        """
+        Processes a single packet through Parser -> Decoder -> Preprocessor -> FlowTracker.
+        Enforces policy routing (skipped/dropped vs logged/flagged) and never allows
+        an exception to escape.
+        """
+        # Stage 1: Packet Parser (L3 -> L7)
+        try:
+            event = _parse_packet_layers(
+                timestamp=timestamp,
+                raw_bytes=raw_bytes,
+                packet_id=packet_id,
+                unknown_policy=self._get_unknown_policy(),
+            )
+        except Exception as e:
+            logger.warning("Stage 'parser' failed on packet %s: %s", packet_id, e)
+            raw_len = len(raw_bytes) if isinstance(raw_bytes, (bytes, bytearray, memoryview)) else 0
+            event = IDSEvent(
+                packet_id=packet_id,
+                timestamp=timestamp,
+                raw_length=raw_len,
+                payload_length=0,
+                status="MALFORMED",
+                error_info={"layer": "parser", "detail": f"{type(e).__name__}: {e}"},
+            )
+
+        # Stage 2: Decoder (Skipped if packet is MALFORMED)
+        if getattr(event, "status", None) != "MALFORMED":
+            try:
+                res = decode_event(event, self.cfg)
+                if isinstance(res, IDSEvent):
+                    event = res
+            except Exception as e:
+                logger.warning("Stage 'decoder' failed on packet %s: %s", packet_id, e)
+                event.decode_status = None
+                _record_error(event, "decoder", f"{type(e).__name__}: {e}")
+        else:
+            event.decode_status = None
+
+        # Stage 3: Preprocessor (Always runs, including on MALFORMED events)
+        try:
+            res = preprocess_event(event, self.cfg)
+            if isinstance(res, IDSEvent):
+                event = res
+            if getattr(event, "preprocess_status", None) is None:
+                self._apply_preprocessor_error_fallback(event)
+        except Exception as e:
+            logger.warning("Stage 'preprocessor' failed on packet %s: %s", packet_id, e)
+            self._apply_preprocessor_error_fallback(event, e)
+
+        prep_status = getattr(event, "preprocess_status", None)
+        if prep_status in self.preprocess_counts:
+            self.preprocess_counts[prep_status] += 1
+
+        # Policy Enforcement: skipped (unsupported_policy=skip) or dropped (invalid_policy=drop)
+        # Do NOT update flow tracker and do NOT write to events.jsonl.
+        action = getattr(event, "processing_action", None)
+        if action in ("skipped", "dropped"):
+            event.flow_id = None
+            event.direction = None
+            event.flow_state = None
+            return event
+
+        # Stage 4: Flow Tracker
+        # Runs for all non-skipped/non-dropped events (including app_protocol=UNKNOWN / status=IGNORED).
+        # FlowTracker internally skips events with preprocess_status=='invalid' or missing 5-tuple.
+        try:
+            res = self.flow_tracker.update(event)
+            if isinstance(res, IDSEvent):
+                event = res
+        except Exception as e:
+            logger.warning("Stage 'flow_tracker' failed on packet %s: %s", packet_id, e)
+            event.flow_id = None
+            event.direction = None
+            event.flow_state = None
+            _record_error(event, "flow_tracker", f"{type(e).__name__}: {e}")
+
+        # Stage 5: Event Logging
+        # unknown_policy=skip (status == "IGNORED") only decides that the event is not logged.
+        if getattr(event, "status", None) != "IGNORED":
+            self._write_event(event)
+
+        return event
+
+
+def process_packet(timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
+    """
+    Thin backward-compatible wrapper around the packet parsing pipeline for Part 1.
+    """
+    return _parse_packet_layers(
+        timestamp=timestamp,
+        raw_bytes=raw_bytes,
+        packet_id=packet_id,
+        unknown_policy=str(UNKNOWN_POLICY).lower(),
+    )

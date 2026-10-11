@@ -1,8 +1,12 @@
 import json
+import logging
 import os
 import sys
 import threading
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
 
 class JSONLLogger:
     """
@@ -67,12 +71,17 @@ class JSONLLogger:
                     
         except Exception as e:
             self.write_errors += 1
+            logger.warning("Failed to write record to JSONL log '%s': %s", self.file_path, e)
             print(f"[ERROR] Failed to write record to JSONL log: {e}", file=sys.stderr)
 
     # Backward compatibility alias for Bai 1
     # Bai 1 detector pipeline calls `logger.log_event(event)`
     def log_event(self, event: Any) -> None:
         self.log(event)
+
+    # Explicit alias for Flow records in Bai 2
+    def log_flow(self, flow: Any) -> None:
+        self.log(flow)
 
     def close(self) -> None:
         """
