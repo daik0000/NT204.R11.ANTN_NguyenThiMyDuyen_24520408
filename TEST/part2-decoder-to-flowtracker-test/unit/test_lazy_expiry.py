@@ -4,8 +4,11 @@ from src.flow.tracker import FlowTracker
 
 C = ("10.0.0.1", 50000)
 S = ("10.0.0.2", 80)
-CFG = {"flow": {"udp_idle_timeout_sec": 5, "tcp_idle_timeout_sec": 5,
-                "tcp_handshake_timeout_sec": 3, "tcp_closed_linger_sec": 2}}
+CFG = {"flow": {"sweep_interval_sec": 1000, 
+                "udp_idle_timeout_sec": 5, 
+                "tcp_idle_timeout_sec": 5,
+                "tcp_handshake_timeout_sec": 3, 
+                "tcp_closed_linger_sec": 2}}
 
 
 def pkt(proto="TCP", flags=None, frm="C", ts=0.0, **kw):

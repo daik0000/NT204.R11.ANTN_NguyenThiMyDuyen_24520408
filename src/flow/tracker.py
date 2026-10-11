@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from src.models.flow import Flow
 from src.flow.flow_key import make_key, direction_of, make_flow_id
@@ -11,6 +11,17 @@ from src.utils.safe import safe_stage
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SWEEP_INTERVAL_SEC = 1.0  # must match settings.yaml (flow.sweep_interval_sec)
+
+
+def _get_sweep_interval(flow_cfg: Any) -> float:
+    """Read a positive finite sweep_interval_sec from flow_cfg, else default."""
+    v = flow_cfg.get("sweep_interval_sec") if isinstance(flow_cfg, dict) else None
+    if type(v) in (int, float) and math.isfinite(v) and v > 0:
+        return float(v)
+    return DEFAULT_SWEEP_INTERVAL_SEC
+
+
 class FlowTracker:
     def __init__(self, cfg: Any, on_export: Optional[Callable[[Flow], None]] = None):
         """
@@ -19,14 +30,55 @@ class FlowTracker:
         self.cfg = cfg if isinstance(cfg, dict) else {}
         self.on_export = on_export
         self.table = FlowTable()
-        self.clock = 0.0  
+        self.clock: float = 0.0
+        self.last_sweep: Optional[float] = None
+
+    def active_flow_count(self) -> int:
+        """Returns the number of currently active flows in the table."""
+        return len(self.table)
+
+    def _get_flow_cfg(self) -> dict:
+        """Safely extracts the 'flow' configuration dictionary."""
+        raw_flow_cfg = self.cfg.get("flow", {})
+        return raw_flow_cfg if isinstance(raw_flow_cfg, dict) else {}
+
+    def sweep(self, now: Optional[float] = None) -> int:
+        """
+        Scans the entire active flow table (O(n)), exports all expired flows,
+        and removes them from the active table.
+
+        Args:
+            now: Event-time timestamp to evaluate expiration against.
+                 Defaults to self.clock if not provided or invalid.
+
+        Returns:
+            The number of expired flows exported during this sweep.
+        """
+        if type(now) in (int, float) and math.isfinite(now):
+            eval_time = float(now)
+        else:
+            eval_time = self.clock
+
+        flow_cfg = self._get_flow_cfg()
+
+        # Collect expired entries first before mutating the underlying table
+        expired_list: List[Tuple[FlowEntry, str]] = []
+        for _key, entry in self.table.items():
+            if is_expired(entry, eval_time, flow_cfg):
+                expired_list.append((entry, get_close_reason(entry)))
+
+        for entry, reason in expired_list:
+            self._export_flow(entry, reason)
+
+        self.last_sweep = min(eval_time, self.clock)  # a far-future manual "now" must not stall periodic sweeps
+        return len(expired_list)
 
     @safe_stage("flow_tracker", event_index=1)
     def update(self, event: Any) -> Any:
         """
         Processes a single IDSEvent to route it to the correct Flow, tracking
-        direction, establishing new flows, maintaining the LRU table, and
-        updating flow statistics & TCP states.
+        direction, establishing new flows, maintaining the LRU table,
+        updating flow statistics & TCP states, and triggering periodic sweeps.
         """
         ts = getattr(event, "timestamp", None)
         ts_ok = type(ts) in (int, float) and math.isfinite(ts)
@@ -54,9 +106,7 @@ class FlowTracker:
         ts = float(ts)
         self.clock = max(self.clock, ts)
 
-        # Extract 'flow' configuration section safely
-        raw_flow_cfg = self.cfg.get("flow", {})
-        flow_cfg = raw_flow_cfg if isinstance(raw_flow_cfg, dict) else {}
+        flow_cfg = self._get_flow_cfg()
 
         # 2. Key Generation & Table Lookup
         key = make_key(trans_proto, src_ip, src_port, dst_ip, dst_port)
@@ -193,6 +243,13 @@ class FlowTracker:
             
             if curr_app is None or (curr_app == "UNKNOWN" and event_app_upper != "UNKNOWN"):
                 flow.application_protocol = event_app_upper
+
+        # 8. Periodic Sweep Trigger (Event-Time Watermark based)
+        sweep_interval = _get_sweep_interval(flow_cfg)
+        if self.last_sweep is None:
+            self.last_sweep = self.clock
+        elif (self.clock - self.last_sweep) >= sweep_interval:
+            self.sweep(self.clock)
 
         return event
 
