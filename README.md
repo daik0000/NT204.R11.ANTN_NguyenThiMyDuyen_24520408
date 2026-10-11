@@ -14,7 +14,7 @@ Bài tập đầu tiên (module này) xây dựng tầng **Packet Capture & Pars
 - Đảm bảo không crash khi gặp packet lỗi, thiếu header, payload rỗng, hoặc protocol không được hỗ trợ.
 - Ghi lại toàn bộ kết quả parse ra file theo định dạng JSON Lines, để tái sử dụng ở các bài tập tiếp theo.
 
-**Bài 2** (đang thực hiện) bổ sung 3 module **Decoder**, **Preprocessor** và **Flow/Connection Tracker** lên trên pipeline của Bài 1 - xem mục "Trạng thái hiện tại".
+**Bài 2** bổ sung 3 module **Decoder**, **Preprocessor** và **Flow/Connection Tracker** lên trên pipeline của Bài 1 - xem mục "Trạng thái hiện tại".
 
 ## Trạng thái hiện tại
 
@@ -75,8 +75,8 @@ Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua
 | #23 | Flow Tracker: key, direction, flow table, thống kê cơ bản | Hoàn thành |
 | #24 | Theo dõi kết nối TCP | Hoàn thành |
 | #25 | UDP flow, idle timeout, giải phóng flow hết hạn | Hoàn thành |
-| #26 | Tích hợp pipeline, `flows.jsonl`, CLI | Đang triển khai |
-| #27 | Chạy test T01-T14 + Regression test Bài 1 | (Chưa bắt đầu) |
+| #26 | Tích hợp pipeline, `flows.jsonl`, CLI | Hoàn thành |
+| #27 | Chạy test T01-T14 + Regression test Bài 1 | Đang triển khai |
 
 ### Vòng đời flow: timeout, hết hạn, giải phóng
 
@@ -96,11 +96,30 @@ Mọi mốc thời gian dùng **event-time** (timestamp của packet, không ph�
 - **Giới hạn bộ nhớ:** bảng đầy (`max_active_flows`, mặc định 100000) thì flow lâu chưa hoạt động nhất bị xuất với `evicted` trước khi thêm flow mới.
 - **Flush khi thoát:** `flush()` xuất mọi flow còn lại, từ cũ đến mới: `CLOSED`/`RESET` giữ `tcp_closed`/`tcp_reset`, còn lại là `flush`. Flow hết hạn nhưng chưa kịp quét lúc kết thúc cũng nhận `flush`.
 
+### Trạng thái TCP
+
+Hàm thuần `next_state()` (`src/flow/tcp_state.py`) tính trạng thái kế tiếp theo độ ưu tiên **RST > SYN > FIN > ACK**. `CLOSED`/`RESET` là trạng thái cuối: packet đến muộn không đổi trạng thái.
+
+| Từ trạng thái | Sự kiện | Sang trạng thái |
+|---|---|---|
+| (packet đầu) | SYN | `HANDSHAKE` |
+| (packet đầu) | SYN/ACK (bắt giữa chừng) | `HANDSHAKE`, `midstream=true` |
+| (packet đầu) | ACK / FIN / cờ khác, không SYN (bắt giữa chừng) | `ESTABLISHED` (FIN thì `CLOSING`), `midstream=true` |
+| `HANDSHAKE` | SYN/ACK từ chiều `backward` | `HANDSHAKE` (ghi nhận đã thấy SYN/ACK) |
+| `HANDSHAKE` | ACK từ bên không gửi SYN/ACK | `ESTABLISHED` |
+| `ESTABLISHED` | FIN một chiều | `CLOSING` |
+| `CLOSING` | FIN chiều còn lại | `CLOSED` (hoặc chờ ACK cuối nếu `tcp_close_requires_final_ack: true`) |
+| `CLOSING` | ACK cuối khi đã đủ hai FIN và `tcp_close_requires_final_ack: true` | `CLOSED` |
+| bất kỳ (chưa kết thúc) | RST | `RESET` |
+
+SYN thuần tới flow đang `CLOSED`/`RESET` còn trong thời gian giữ là tái dùng cổng (xem "Vòng đời flow"), không đổi trạng thái flow cũ.
+
 ### Giới hạn đã biết
 
 - Event-time chỉ tiến khi có packet mới: ở chế độ `--interface`, nếu traffic ngừng hẳn thì flow chưa hết hạn cho tới packet kế tiếp hoặc lúc thoát (`flush`). Hướng mở rộng: `capture_live` phát tín hiệu heartbeat khi hàng đợi rỗng.
 - `sweep` duyệt toàn bảng O(n) mỗi `sweep_interval_sec`; timeout khác nhau theo loại flow nên LRU thuần không đủ để dừng sớm. Hướng cải tiến: hàng đợi ưu tiên theo thời điểm hết hạn.
 - Packet đến muộn hơn `clock` (không đúng thứ tự) không làm flow hết hạn và không kéo `clock` lùi; flow đã bị xuất rồi không được "mở lại".
+- `flows.jsonl` chỉ có dòng cho flow **đã xuất**. Nếu chương trình bị kill cưỡng bức (`SIGKILL`, mất điện) thì các flow còn trong bảng không được ghi; thoát bằng `Ctrl+C`, hết pcap hoặc lỗi bắt được thì luôn `flush`.
 - Parse từng packet độc lập: không ghép lại TCP, không giải nén gzip/chunked, không giải mã TLS.
 - Nhánh dự phòng khi xuất flow (key trong bảng không khớp key dựng lại) chỉ xoá entry chứ không gọi callback; tình huống này không xảy ra khi bảng chỉ được ghi qua `update()`. Hướng cải tiến: truyền key của bảng vào `_export_flow`.
 
@@ -130,15 +149,58 @@ Import và xử lý packet từ file PCAP (tham số `--bpf-filter` không áp d
 python main.py --pcap test.pcap
 ```
 
+Chạy với cấu hình và đường dẫn output tùy chọn (Bài 2):
+
+```bash
+python main.py --pcap test.pcap --config config/settings.yaml \
+    --events-output output/events.jsonl --flows-output output/flows.jsonl
+```
+
+| Tham số | Mặc định | Ý nghĩa |
+|---|---|---|
+| `--pcap FILE` / `--interface IF` | (bắt buộc chọn một) | Nguồn packet: file PCAP hoặc interface live; hai tham số loại trừ nhau |
+| `--config FILE` | `config/settings.yaml` | File cấu hình; giá trị sai (ví dụ timeout âm) làm chương trình dừng với exit code 1 |
+| `--events-output FILE` | `output/events.jsonl` | Nơi ghi `IDSEvent` |
+| `--output FILE` | (không) | Tên cũ của Bài 1, tương đương `--events-output`; nếu có cả hai thì `--events-output` được ưu tiên |
+| `--flows-output FILE` | `output/flows.jsonl` | Nơi ghi flow record khi flow kết thúc |
+| `--bpf-filter EXPR` | `"tcp or udp"` | BPF filter, chỉ áp dụng cho `--interface` |
+
+Khi kết thúc (hết pcap, `Ctrl+C` hoặc lỗi giữa chừng), chương trình luôn **flush** để xuất mọi flow còn lại ra `flows.jsonl`, đóng file output rồi in một dòng tóm tắt. Exit code là 0 khi chạy xong hoặc bị `Ctrl+C`, 1 khi lỗi (file không tồn tại, thiếu quyền, cấu hình sai, lỗi bất ngờ).
+
 > Lưu ý: live capture cần quyền root (hoặc cấp quyền `cap_net_raw` cho Python) để có thể mở interface ở chế độ bắt gói tin trực tiếp. Nhấn `Ctrl+C` để dừng chế độ `--interface`.
 
 ### Kết quả output
 
-Mỗi packet sau khi qua pipeline được ghi thành 1 dòng JSON vào **`output/events.jsonl`** (đường dẫn mặc định, tạo tự động nếu chưa tồn tại; tính tương đối theo thư mục chạy lệnh — luôn chạy `main.py` từ thư mục gốc repo). Ngoài ra chương trình cũng in log tóm tắt ra console theo thời gian thực (packet OK định kỳ mỗi 100 gói, packet `MALFORMED`/`UNKNOWN`/`IGNORED` được log riêng).
+Chương trình ghi hai file JSON Lines (đường dẫn mặc định, tạo tự động nếu chưa tồn tại; tính tương đối theo thư mục chạy lệnh — luôn chạy `main.py` từ thư mục gốc repo):
+
+- **`output/events.jsonl`**: mỗi packet sau khi qua pipeline là 1 dòng `IDSEvent`. Event bị bỏ qua có chủ ý (`unknown_policy: skip`, `unsupported_policy: skip`, `invalid_policy: drop`) không được ghi.
+- **`output/flows.jsonl`**: mỗi flow là 1 dòng `Flow`, ghi **khi flow được xuất** (kết thúc, hết hạn, bị đẩy khỏi bảng hoặc `flush` lúc thoát). Thứ tự dòng là thứ tự xuất, không phải thứ tự bắt đầu flow.
+
+Ngoài ra chương trình in log ra console theo thời gian thực (packet OK định kỳ mỗi 100 gói, packet `MALFORMED`/`UNKNOWN`/`IGNORED` được log riêng) và một dòng tóm tắt khi kết thúc:
+
+```
+System shutdown complete. Summary: packets=4, flows=3, active_before_flush=3, preprocess_status={valid=2, partial=1, invalid=1}
+```
+
+`flows` là số flow đã xuất, `active_before_flush` là số flow còn trong bảng ngay trước khi `flush`.
 
 Cấu hình `config/settings.yaml` gồm:
 - `ports`: mapping port  -> tên application protocol dùng cho detector port-based.
+- `flow`: các khoá timeout và giới hạn của Flow Tracker (bảng dưới).
+- `decoder` (`enabled`, `max_payload_bytes`, `html_entity_content_types`) và `preprocessor` (`unsupported_policy`: `mark`/`skip`, `invalid_policy`: `flag`/`drop`): xem phần Bài 2 ở trên.
 - `unknown_policy` (`log` hoặc `skip`): quyết định hành vi khi không nhận diện được application protocol nào — `log` vẫn ghi event ra JSONL với `app_protocol="UNKNOWN"`; `skip` đặt `status="IGNORED"` và không ghi ra file (chỉ áp dụng cho tầng Application, không ảnh hưởng packet non-IPv4 ở tầng Network).
+
+Các khoá của section `flow` (mặc định trong code trùng với `settings.yaml`; giá trị phải là số hữu hạn > 0, sai thì chương trình dừng khi khởi động):
+
+| Khoá | Mặc định | Ý nghĩa |
+|---|---|---|
+| `udp_idle_timeout_sec` | 60 | Idle timeout của UDP flow |
+| `tcp_handshake_timeout_sec` | 30 | Hết hạn của TCP flow chưa bắt tay xong |
+| `tcp_closed_linger_sec` | 10 | Thời gian giữ flow `CLOSED`/`RESET` để hứng packet muộn và phát hiện tái dùng cổng |
+| `tcp_idle_timeout_sec` | 300 | Idle timeout của TCP `ESTABLISHED`/`CLOSING` |
+| `max_active_flows` | 100000 | Số flow tối đa trong bảng; đầy thì đẩy flow lâu chưa hoạt động nhất |
+| `sweep_interval_sec` | 1.0 | Khoảng event-time giữa hai lần quét hết hạn |
+| `tcp_close_requires_final_ack` | `false` | `true`: chỉ `CLOSED` sau khi thấy ACK cuối của hai FIN |
 
 ### Tối ưu buffer OS cho live capture
 
@@ -198,7 +260,20 @@ Quy ước:
 - `byte_count` là tổng độ dài frame (khớp cột *Bytes* của Wireshark -> Statistics -> Conversations); `payload_byte_count` chỉ tính dữ liệu tầng ứng dụng.
 - Mỗi bộ đếm cờ là số packet **có mang cờ đó** (một packet SYN/ACK tăng cả `syn_count` lẫn `ack_count`). Đối chiếu tên với đề: `SYN_count` <-> `syn_count`, tương tự cho ACK/FIN/RST.
 - `state` của TCP: `HANDSHAKE`, `ESTABLISHED`, `CLOSING`, `CLOSED`, `RESET`; với UDP luôn là `ACTIVE` (UDP không có trạng thái kết nối) và các bộ đếm cờ TCP bằng 0.
+- `midstream` là `true` khi packet đầu tiên thấy được không phải SYN (capture bắt đầu giữa kết nối).
 - `close_reason` là `None` khi flow còn hoạt động; khi flow được xuất ra có thể là `tcp_closed`, `tcp_reset`, `idle_timeout`, `handshake_timeout`, `port_reuse`, `evicted` hoặc `flush`.
+
+Ví dụ một dòng của `flows.jsonl` (minh hoạ, giá trị tự chọn; một dòng thật nằm trên một dòng, ở đây xuống dòng cho dễ đọc):
+
+```json
+{"flow_id": "a1b2c3d4e5f6", "protocol": "UDP",
+ "endpoint_a": {"ip": "10.0.0.1", "port": 5353}, "endpoint_b": {"ip": "10.0.0.2", "port": 53},
+ "application_protocol": "DNS", "start_time": 1.0, "last_seen": 1.2, "duration": 0.2,
+ "packet_count": 2, "byte_count": 180, "payload_byte_count": 96,
+ "fwd_packet_count": 1, "fwd_byte_count": 80, "bwd_packet_count": 1, "bwd_byte_count": 100,
+ "syn_count": 0, "ack_count": 0, "fin_count": 0, "rst_count": 0,
+ "state": "ACTIVE", "close_reason": "flush", "midstream": false}
+```
 
 ## Cấu trúc thư mục
 
@@ -207,7 +282,7 @@ Quy ước:
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
-├── main.py  # CLI entrypoint: --interface / --pcap
+├── main.py  # CLI entrypoint: --interface / --pcap, --config, --events-output, --flows-output; flush khi thoát
 ├── src/
 │   ├── models/
 │   │   ├── event.py # Dataclass IDSEvent — schema chuẩn hóa dữ liệu sự kiện (gồm các field của Bài 2)
@@ -229,15 +304,15 @@ Quy ước:
 │   │       ├── dns_parser.py      # Decode DNS query/response qua scapy.layers.dns: queries, answers
 │   │       └── smtp_parser.py     # Decode SMTP command/response theo dòng: multi-line, pipelining; DATA: mime_headers + body_offset
 │   ├── pipeline/
-│   │   └── pipeline.py         # process_packet() — orchestrate network  -> transport  -> detector  -> application  -> IDSEvent
-│   ├── decoder/               # [Part 2] Giải mã URL/form, HTML entity, MIME Base64/QP, charset (đang phát triển)
-│   ├── preprocessor/          # [Part 2] Validation, normalization, xử lý field thiếu (đang phát triển)
-│   ├── flow/                  # [Part 2] Flow/Connection Tracker: 5-tuple, TCP state, UDP, timeout (đang phát triển)
+│   │   └── pipeline.py         # Pipeline — orchestrate network -> transport -> detector -> application -> Decoder -> Preprocessor -> Flow Tracker; ghi events.jsonl và flows.jsonl; flush()/close()
+│   ├── decoder/               # [Part 2] charset.py, url_decoder.py, html_decoder.py, mime_decoder.py, decoder.py (orchestrator)
+│   ├── preprocessor/          # [Part 2] aliases.py, validator.py, normalizer.py, defaults.py, preprocessor.py (orchestrator)
+│   ├── flow/                  # [Part 2] Flow/Connection Tracker: flow_key.py, flow_table.py, tcp_state.py, timeout.py, tracker.py
 │   └── utils/
-│       ├── safe.py            # Decorator @safe_parse — bắt lỗi chung cho mọi parser, trả status="MALFORMED"
+│       ├── safe.py            # @safe_parse (parser, trả status="MALFORMED") và @safe_stage (Decoder/Preprocessor/Tracker, ghi error_info và trả lại event)
 │       └── config.py          # Load, merge mặc định và validate config/settings.yaml
 ├── config/
-│   └── settings.yaml   # Mapping port cho từng application protocol, policy xử lý protocol không xác định
+│   └── settings.yaml   # Mapping port, policy (unknown/unsupported/invalid), cấu hình decoder, preprocessor và flow
 └── TEST/
     ├── part1-packet-capture-test/ # 12 test case bắt buộc của Bài 1, mỗi case một thư mục riêng
     ├── part2-decoder-to-flowtracker-test/
