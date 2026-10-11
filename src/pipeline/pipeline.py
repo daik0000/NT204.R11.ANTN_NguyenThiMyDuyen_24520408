@@ -190,15 +190,31 @@ class Pipeline:
         self.flow_logger = flow_logger
         self.flow_tracker = FlowTracker(self.cfg, on_export=self._on_flow_export)
 
+    def _emit_to_sink(self, sink: Any, record: Any) -> None:
+        """Safely writes a record (IDSEvent or Flow) to a configured logger/sink."""
+        if sink is None:
+            return
+        try:
+            if hasattr(sink, "write_event") and isinstance(record, IDSEvent):
+                sink.write_event(record)
+            elif hasattr(sink, "write_flow") and isinstance(record, Flow):
+                sink.write_flow(record)
+            elif hasattr(sink, "write"):
+                sink.write(record)
+            elif hasattr(sink, "log"):
+                sink.log(record)
+            elif callable(sink):
+                sink(record)
+        except Exception as e:
+            logger.warning("Failed to write record to logger: %s", e)
+
     def _on_flow_export(self, flow: Flow) -> None:
         """Callback invoked when a flow is exported from FlowTracker."""
-        if self.flow_logger is not None:
-            if hasattr(self.flow_logger, "write"):
-                self.flow_logger.write(flow)
-            elif hasattr(self.flow_logger, "log"):
-                self.flow_logger.log(flow)
-            elif callable(self.flow_logger):
-                self.flow_logger(flow)
+        self._emit_to_sink(self.flow_logger, flow)
+
+    def _write_event(self, event: IDSEvent) -> None:
+        """Writes an IDSEvent to the configured event_logger."""
+        self._emit_to_sink(self.event_logger, event)
 
     def _get_unknown_policy(self) -> str:
         if "unknown_policy" in self.cfg and self.cfg["unknown_policy"] is not None:
@@ -216,10 +232,19 @@ class Pipeline:
         if exc is not None:
             _record_error(event, "preprocessor", f"{type(exc).__name__}: {exc}")
 
+    def flush(self) -> int:
+        """Flushes all remaining active flows from the FlowTracker."""
+        try:
+            return self.flow_tracker.flush()
+        except Exception as e:
+            logger.warning("Stage 'flow_tracker.flush' failed: %s", e)
+            return 0
+
     def process(self, timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
         """
-        Processes a single packet through Parser -> Decoder -> Preprocessor.
-        Never allows an exception to escape; each stage failure is isolated.
+        Processes a single packet through Parser -> Decoder -> Preprocessor -> FlowTracker.
+        Enforces policy routing (skipped/dropped vs logged/flagged) and never allows
+        an exception to escape.
         """
         # Stage 1: Packet Parser (L3 -> L7)
         try:
@@ -264,6 +289,33 @@ class Pipeline:
         except Exception as e:
             logger.warning("Stage 'preprocessor' failed on packet %s: %s", packet_id, e)
             self._apply_preprocessor_error_fallback(event, e)
+
+        # Policy Enforcement: skipped (unsupported_policy=skip) or dropped (invalid_policy=drop)
+        # Do NOT update flow tracker and do NOT write to events.jsonl.
+        action = getattr(event, "processing_action", None)
+        if action in ("skipped", "dropped"):
+            event.flow_id = None
+            event.direction = None
+            event.flow_state = None
+            return event
+
+        # Stage 4: Flow Tracker
+        # Runs for all non-skipped/non-dropped events (including app_protocol=UNKNOWN / status=IGNORED).
+        # FlowTracker internally skips events with preprocess_status=='invalid' or missing 5-tuple.
+        try:
+            res = self.flow_tracker.update(event)
+            if isinstance(res, IDSEvent):
+                event = res
+        except Exception as e:
+            logger.warning("Stage 'flow_tracker' failed on packet %s: %s", packet_id, e)
+            event.flow_id = None
+            event.direction = None
+            event.flow_state = None
+            _record_error(event, "flow_tracker", f"{type(e).__name__}: {e}")
+
+        # unknown_policy=skip (status == "IGNORED") only decides that the event is not logged.
+        if getattr(event, "status", None) != "IGNORED":
+            self._write_event(event)
 
         return event
 

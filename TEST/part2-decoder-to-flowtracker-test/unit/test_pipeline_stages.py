@@ -132,14 +132,6 @@ def test_part1_wrapper_does_not_run_part2_stages(monkeypatch):
     ev = process_packet(1.0, b"Xhello", 1)
     assert calls == [] and ev.preprocess_status is None and ev.decode_status is None
 
-
-def test_tracker_is_still_not_fed(monkeypatch):
-    spy(monkeypatch, [])
-    p = Pipeline({})
-    p.process(1.0, b"Xhello", 1)
-    assert p.flow_tracker.active_flow_count() == 0 and p.process(2.0, b"Xhello", 2).flow_id is None
-
-
 def test_real_decoder_and_preprocessor_give_every_event_a_verdict():
     for raw in (b"Xhello", b"Mxxxx", b"X"):
         ev = Pipeline({}).process(1.0, raw, 1)

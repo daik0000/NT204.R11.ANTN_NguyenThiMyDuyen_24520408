@@ -64,7 +64,7 @@ def test_pipeline_process_matches_process_packet(monkeypatch, raw, policy):
     a = dataclasses.asdict(process_packet(1.0, raw, 7))
     b = dataclasses.asdict(Pipeline({"unknown_policy": policy}).process(1.0, raw, 7))
 
-    for key in ("preprocess_status", "processing_action"):   # the only fields the Part 2 stages add here
+    for key in ("preprocess_status", "processing_action", "flow_id", "direction", "flow_state"):   # added by Part 2 stages
         b.pop(key), a.pop(key)
 
     assert a == b
@@ -110,13 +110,6 @@ def test_two_pipelines_do_not_share_state():
     a, b = Pipeline({}), Pipeline({})
     assert a.flow_tracker is not b.flow_tracker
     assert a.flow_tracker.table is not b.flow_tracker.table
-
-
-def test_process_does_not_feed_the_tracker_yet():
-    p = Pipeline({})
-    p.process(1.0, b"Xt", 1)
-    assert p.flow_tracker.active_flow_count() == 0
-
 
 def _flow():
     return Flow(flow_id="x", protocol="UDP", endpoint_a={"ip": "1", "port": 1},
