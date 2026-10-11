@@ -53,18 +53,18 @@ def RESET(t0=100.0):
 
 @pytest.mark.parametrize("seq", [CLOSE, RESET])
 def test_pure_syn_after_terminated_flow_creates_new_flow(seq):
-    tr, ev, out = run(seq() + [pkt(["SYN"], "C", 130.0)])
+    tr, ev, out = run(seq() + [pkt(["SYN"], "C", 105.0)])
     assert len(out) == 1 and out[0].close_reason == "port_reuse"
     new = ev[-1]
     assert new.flow_id != ev[0].flow_id
     assert new.flow_state == "HANDSHAKE"
     flow = tr.table.get(next(k for k, _ in tr.table.items())).flow
-    assert flow.start_time == 130.0
+    assert flow.start_time == 105.0
     assert flow.syn_count == 1 and flow.packet_count == 1
 
 
 def test_old_flow_keeps_final_numbers():
-    _, _, out = run(CLOSE() + [pkt(["SYN"], "C", 130.0)])
+    _, _, out = run(CLOSE() + [pkt(["SYN"], "C", 105.0)])
     old = out[0]
     assert old.state == "CLOSED"
     assert old.packet_count == 6
@@ -80,7 +80,7 @@ def test_old_flow_exported_before_new_exists():
         sizes.append(len(tr.table))
 
     tr = FlowTracker({}, on_export=on_export)
-    for p in CLOSE() + [pkt(["SYN"], "C", 130.0)]:
+    for p in CLOSE() + [pkt(["SYN"], "C", 105.0)]:
         tr.update(p)
     assert sizes == [0]
     assert len(tr.table) == 1
@@ -90,7 +90,7 @@ def test_old_flow_exported_before_new_exists():
     ["SYN", "ACK"], ["ACK"], ["FIN", "ACK"], ["RST"], ["PSH", "ACK"], [],
 ])
 def test_non_pure_syn_stays_in_terminated_flow(flags):
-    tr, ev, out = run(CLOSE() + [pkt(flags, "S", 130.0)])
+    tr, ev, out = run(CLOSE() + [pkt(flags, "S", 105.0)])
     assert out == []
     assert ev[-1].flow_id == ev[0].flow_id
     assert len(tr.table) == 1
@@ -111,14 +111,14 @@ def test_syn_on_live_flow_is_retransmit(prefix):
 
 
 def test_other_side_can_open_next_connection():
-    tr, ev, out = run(CLOSE() + [pkt(["SYN"], "S", 130.0)])
+    tr, ev, out = run(CLOSE() + [pkt(["SYN"], "S", 105.0)])
     assert len(out) == 1 and out[0].close_reason == "port_reuse"
     new = tr.table.get(next(k for k, _ in tr.table.items())).flow
     assert new.endpoint_a == {"ip": B[0], "port": B[1]}
 
 
 def test_three_back_to_back_connections():
-    tr, ev, out = run(CLOSE(100.0) + CLOSE(200.0) + CLOSE(300.0))
+    tr, ev, out = run(CLOSE(100.0) + CLOSE(104.0) + CLOSE(108.0))
     ids = {e.flow_id for e in ev}
     assert len(ids) == 3
     assert [f.close_reason for f in out] == ["port_reuse", "port_reuse"]
@@ -135,7 +135,7 @@ def test_failing_export_callback_does_not_block_new_flow():
     def boom(_):
         raise RuntimeError("sink down")
 
-    tr, ev, out = run(CLOSE() + [pkt(["SYN"], "C", 130.0)], on_export=boom)
+    tr, ev, out = run(CLOSE() + [pkt(["SYN"], "C", 105.0)], on_export=boom)
     assert ev[-1].flow_state == "HANDSHAKE"
     assert ev[-1].flow_id != ev[0].flow_id
     assert len(tr.table) == 1

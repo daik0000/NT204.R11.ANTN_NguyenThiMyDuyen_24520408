@@ -1,14 +1,35 @@
 import logging
 import math
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from src.models.flow import Flow
 from src.flow.flow_key import make_key, direction_of, make_flow_id
 from src.flow.flow_table import FlowTable, FlowEntry
 from src.flow.tcp_state import next_state, normalize_flags
+from src.flow.timeout import is_expired, get_close_reason
 from src.utils.safe import safe_stage
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SWEEP_INTERVAL_SEC = 1.0  # must match settings.yaml (flow.sweep_interval_sec)
+DEFAULT_MAX_ACTIVE_FLOWS = 100000  # must match settings.yaml (flow.max_active_flows)
+
+
+def _get_sweep_interval(flow_cfg: Any) -> float:
+    """Read a positive finite sweep_interval_sec from flow_cfg, else default."""
+    v = flow_cfg.get("sweep_interval_sec") if isinstance(flow_cfg, dict) else None
+    if type(v) in (int, float) and math.isfinite(v) and v > 0:
+        return float(v)
+    return DEFAULT_SWEEP_INTERVAL_SEC
+
+
+def _get_max_active_flows(flow_cfg: Any) -> int:
+    """Read a positive integer max_active_flows from flow_cfg, else default."""
+    v = flow_cfg.get("max_active_flows") if isinstance(flow_cfg, dict) else None
+    if type(v) is int and v > 0:
+        return v
+    return DEFAULT_MAX_ACTIVE_FLOWS
+
 
 class FlowTracker:
     def __init__(self, cfg: Any, on_export: Optional[Callable[[Flow], None]] = None):
@@ -18,14 +39,83 @@ class FlowTracker:
         self.cfg = cfg if isinstance(cfg, dict) else {}
         self.on_export = on_export
         self.table = FlowTable()
-        self.clock = 0.0  
+        self.clock: float = 0.0
+        self.last_sweep: Optional[float] = None
+
+    def active_flow_count(self) -> int:
+        """Returns the number of currently active flows in the table."""
+        return len(self.table)
+
+    def _get_flow_cfg(self) -> dict:
+        """Safely extracts the 'flow' configuration dictionary."""
+        raw_flow_cfg = self.cfg.get("flow", {})
+        return raw_flow_cfg if isinstance(raw_flow_cfg, dict) else {}
+
+    def sweep(self, now: Optional[float] = None) -> int:
+        """
+        Scans the entire active flow table (O(n)), exports all expired flows,
+        and removes them from the active table.
+
+        Args:
+            now: Event-time timestamp to evaluate expiration against.
+                 Defaults to self.clock if not provided or invalid.
+
+        Returns:
+            The number of expired flows exported during this sweep.
+        """
+        if type(now) in (int, float) and math.isfinite(now):
+            eval_time = float(now)
+        else:
+            eval_time = self.clock
+
+        flow_cfg = self._get_flow_cfg()
+
+        # Collect expired entries first before mutating the underlying table
+        expired_list: List[Tuple[FlowEntry, str]] = []
+        for _key, entry in self.table.items():
+            if is_expired(entry, eval_time, flow_cfg):
+                expired_list.append((entry, get_close_reason(entry)))
+
+        for entry, reason in expired_list:
+            self._export_flow(entry, reason)
+
+        self.last_sweep = min(eval_time, self.clock)  # a far-future manual "now" must not stall periodic sweeps
+        return len(expired_list)
+
+    def flush(self) -> int:
+        """
+        Exports all remaining flows in the active table on shutdown (end of PCAP or Ctrl+C),
+        ordered from oldest (least recently active) to newest.
+
+        Flows already in CLOSED or RESET state retain 'tcp_closed' / 'tcp_reset';
+        all other active flows receive close_reason='flush'.
+
+        Returns:
+            The number of flows flushed.
+        """
+        # Collect all remaining entries first (snapshot is naturally ordered oldest-first)
+        remaining: List[Tuple[Any, FlowEntry, str]] = []
+        for key, entry in self.table.items():
+            if entry.flow.state in ("CLOSED", "RESET"):
+                reason = get_close_reason(entry)
+            else:
+                reason = "flush"
+            remaining.append((key, entry, reason))
+
+        for key, entry, reason in remaining:
+            before = len(self.table)
+            self._export_flow(entry, reason)
+            if len(self.table) >= before:  # defensive cleanup if key reconstruction mismatched
+                self.table.remove(key)
+
+        return len(remaining)
 
     @safe_stage("flow_tracker", event_index=1)
     def update(self, event: Any) -> Any:
         """
         Processes a single IDSEvent to route it to the correct Flow, tracking
-        direction, establishing new flows, maintaining the LRU table, and
-        updating flow statistics & TCP states.
+        direction, establishing new flows, maintaining the LRU table,
+        updating flow statistics & TCP states, and triggering periodic sweeps.
         """
         ts = getattr(event, "timestamp", None)
         ts_ok = type(ts) in (int, float) and math.isfinite(ts)
@@ -53,6 +143,8 @@ class FlowTracker:
         ts = float(ts)
         self.clock = max(self.clock, ts)
 
+        flow_cfg = self._get_flow_cfg()
+
         # 2. Key Generation & Table Lookup
         key = make_key(trans_proto, src_ip, src_port, dst_ip, dst_port)
         entry = self.table.get(key)
@@ -62,18 +154,31 @@ class FlowTracker:
         flags = t_fields.get("flags") if isinstance(t_fields, dict) else []
         flag_set = normalize_flags(flags)
 
-        # 3. Port Reuse Detection
-        # If a pure SYN (no ACK) arrives for an existing flow that is already terminated,
-        # we flush the old flow and treat this as a brand new connection.
-        if entry is not None and trans_proto == "TCP":
-            if "SYN" in flag_set and "ACK" not in flag_set and entry.flow.state in ("CLOSED", "RESET"):
-                # CRITICAL: Export the old flow BEFORE creating the new one to prevent
-                # _export_flow from accidentally purging the newly created entry via the shared key.
+        # 3. Lazy Expiration & Port Reuse Detection
+        if entry is not None:
+            # 3.1 Lazy expiration: check if the existing flow timed out before this packet arrived
+            if is_expired(entry, ts, flow_cfg):
+                self._export_flow(entry, get_close_reason(entry))
+                entry = None
+            # 3.2 Port reuse: pure SYN (no ACK) arriving on an unexpired CLOSED/RESET flow
+            elif trans_proto == "TCP" and "SYN" in flag_set and "ACK" not in flag_set and entry.flow.state in ("CLOSED", "RESET"):
                 self._export_flow(entry, "port_reuse")
-                entry = None  # Force creation of a new flow below
+                entry = None
 
         # 4. Attach or Create Flow
         if entry is None:
+            # 4.1 Evict least-recently-active flow(s) if table is at capacity (O(1) per eviction)
+            max_flows = _get_max_active_flows(flow_cfg)
+            while len(self.table) >= max_flows:
+                oldest_pair = self.table.oldest()
+                if oldest_pair is None:
+                    break
+                oldest_key, oldest_entry = oldest_pair
+                before = len(self.table)
+                self._export_flow(oldest_entry, "evicted")
+                if len(self.table) >= before:  # defensive: never spin forever on an inconsistent entry
+                    self.table.remove(oldest_key)
+
             flow = Flow(
                 flow_id=make_flow_id(key, ts),
                 protocol=trans_proto,
@@ -111,16 +216,13 @@ class FlowTracker:
         is_first_packet = (entry.flow.packet_count == 0)
         
         if trans_proto == "TCP":
-            # Extract tracking config from correct section
-            tracker_cfg = self.cfg.get("flow", {})
-            
             ctx = {
                 "synack_seen": entry.synack_seen,
                 "synack_dir": entry.synack_dir,
                 "fin_fwd": entry.fin_fwd,
                 "fin_bwd": entry.fin_bwd,
                 "midstream": entry.flow.midstream,
-                "tcp_close_requires_final_ack": tracker_cfg.get("tcp_close_requires_final_ack", False)
+                "tcp_close_requires_final_ack": bool(flow_cfg.get("tcp_close_requires_final_ack", False))
             }
             
             old_state = entry.flow.state
@@ -190,6 +292,13 @@ class FlowTracker:
             
             if curr_app is None or (curr_app == "UNKNOWN" and event_app_upper != "UNKNOWN"):
                 flow.application_protocol = event_app_upper
+
+        # 8. Periodic Sweep Trigger (Event-Time Watermark based)
+        sweep_interval = _get_sweep_interval(flow_cfg)
+        if self.last_sweep is None:
+            self.last_sweep = self.clock
+        elif (self.clock - self.last_sweep) >= sweep_interval:
+            self.sweep(self.clock)
 
         return event
 

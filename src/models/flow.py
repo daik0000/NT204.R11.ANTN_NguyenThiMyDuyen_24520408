@@ -64,6 +64,17 @@ class Flow:
 
     # --- Auxiliary ---
     close_reason: Optional[CloseReason] = None
+    """
+    Reason for flow termination:
+    - 'tcp_closed': Safe teardown completed (lingered for tcp_closed_linger_sec).
+    - 'tcp_reset': Aborted by RST (lingered for tcp_closed_linger_sec).
+    - 'idle_timeout': Standard idle timeout (ESTABLISHED/CLOSING or UDP).
+    - 'handshake_timeout': Stuck in HANDSHAKE beyond tcp_handshake_timeout_sec.
+    - 'port_reuse': Evicted early because a new connection reused the 5-tuple.
+    - 'evicted': Evicted due to active flow table capacity limit (max_active_flows).
+    - 'flush': Flushed on shutdown (end of PCAP or Ctrl+C); flows already CLOSED/RESET keep tcp_closed/tcp_reset.
+    """
+    
     midstream: bool = False             # flow started in the middle (no SYN observed)
 
     @property
