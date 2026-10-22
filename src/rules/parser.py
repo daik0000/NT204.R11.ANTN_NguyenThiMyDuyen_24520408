@@ -544,42 +544,45 @@ def _non_negative_int(text: str) -> Optional[int]:
     return n if n <= MAX_OPTION_INT else None
 
 
-def parse_contents(options: List[OptionPair]) -> Tuple[ContentSpec, ...]:
+def parse_contents_full(options: List[OptionPair]) -> Tuple[Tuple[ContentSpec, ...], Optional[str]]:
     """
     Build the ContentSpec list from the options, keeping the rule order (distance/within are
-    relative to the previous content, so the order matters).
+    relative to the previous content, so the order matters). Returns (contents, unsupported).
 
     Each modifier (nocase, offset, depth, distance, within) applies to the content right before
     it. offset/depth are integers >= 0, within >= 1, distance any integer (negative allowed),
     nocase takes no value.
 
+    A negated content (content:!"...") is not supported, but it is still parsed completely and
+    stays in `contents`, so the cross-option checks can see it and an invalid rule is not
+    mistaken for a merely unsupported one. `unsupported` is then 'unsupported:content_negation',
+    otherwise None; a rule with unsupported content must never be turned into a Rule.
+
     Raises RuleSyntaxError, first problem in rule order:
       invalid:modifier_without_content  a modifier before any content
       invalid:duplicate_option:<k>      the same modifier twice on one content
-      invalid:bad_option_value:<k>      bad modifier value, or bad content (<k> is 'content')
-    unsupported:content_negation is raised only at the end, so an invalid option anywhere wins
-    over it (the negated content itself is dropped and its modifiers are still checked).
+      invalid:bad_option_value:<k>      bad modifier value, or bad content (<k> is 'content',
+                                        also inside a negated content)
     """
     contents: List[ContentSpec] = []
     current: Optional[dict] = None            # the content being built (None = none yet)
-    negated_seen = False
+    unsupported: Optional[str] = None
 
     def close() -> None:
-        if current is not None and not current["negated"]:
+        if current is not None:
             contents.append(ContentSpec(current["raw"], current["pattern"], **current["mods"]))
 
     for key, value in options:
         if key == "content":
             close()
-            negated = False
-            raw, pattern = "", b""
             try:
                 raw, pattern = decode_content(value)
             except RuleSyntaxError as e:
                 if e.reason != "unsupported:content_negation":
                     raise
-                negated = negated_seen = True
-            current = {"raw": raw, "pattern": pattern, "negated": negated, "mods": {}, "seen": set()}
+                raw, pattern = decode_content(value[1:])      # check the negated text too
+                unsupported = unsupported or e.reason
+            current = {"raw": raw, "pattern": pattern, "mods": {}, "seen": set()}
         elif key in _CONTENT_MODIFIERS:
             if current is None:
                 raise RuleSyntaxError("invalid:modifier_without_content")
@@ -588,10 +591,19 @@ def parse_contents(options: List[OptionPair]) -> Tuple[ContentSpec, ...]:
             current["seen"].add(key)
             current["mods"][key] = _modifier_value(key, value)
     close()
+    return tuple(contents), unsupported
 
-    if negated_seen:
-        raise RuleSyntaxError("unsupported:content_negation")
-    return tuple(contents)
+
+def parse_contents(options: List[OptionPair]) -> Tuple[ContentSpec, ...]:
+    """
+    Like parse_contents_full but raises RuleSyntaxError('unsupported:content_negation') when a
+    content is negated (after the whole list has been checked, so an invalid option wins), and
+    never returns a negated content.
+    """
+    contents, unsupported = parse_contents_full(options)
+    if unsupported:
+        raise RuleSyntaxError(unsupported)
+    return contents
 
 
 # --- flow, flags, dsize --------------------------------------------------------------------
