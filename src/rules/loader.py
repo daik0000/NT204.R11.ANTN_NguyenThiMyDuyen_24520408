@@ -113,6 +113,9 @@ def load_rules(cfg: Dict[str, Any],
     - parse_fn raising, or not returning a ParseResult, gives invalid:internal_error for that
       line; the next line is still processed.
 
+    Every invalid/unsupported rule is also logged as
+    logger.warning("rule %s:%d rejected: %s", file, line, reason).
+
     Per rule line one RuleRecord is produced (valid / invalid / unsupported / disabled), and
     rule_lines == valid + invalid + unsupported + disabled.
     - A valid rule whose sid was already seen in an earlier valid rule (any file) becomes
@@ -210,4 +213,6 @@ def _collect(result: ParseResult, file: str, line_no: int, text: str, report: Lo
         report.unsupported += 1
     else:
         report.disabled += 1
+    if status in ("invalid", "unsupported"):
+        logger.warning("rule %s:%d rejected: %s", file, line_no, reason)
     records.append(RuleRecord(file, line_no, status, reason, sid, text))

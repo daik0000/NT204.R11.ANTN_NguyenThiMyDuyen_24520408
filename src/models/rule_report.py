@@ -188,3 +188,9 @@ class LoadReport:
 
     def to_dict(self) -> Dict[str, int]:
         return asdict(self)
+
+    def summary(self) -> str:
+        """One-line summary; 'loaded' is the number of active rules (the 'valid' counter)."""
+        return (f"rules: loaded={self.valid} invalid={self.invalid} "
+                f"unsupported={self.unsupported} disabled={self.disabled} "
+                f"files_failed={self.files_failed}")
