@@ -52,6 +52,8 @@ LoadReport counters (all non-negative ints):
   valid, invalid, unsupported               outcome of each rule line
   disabled                                  valid rules switched off by engine.disabled_sids
   files_failed                              rule files that could not be read
+  disabled_files                            rule files skipped because enabled is false
+                                            (not read, so they add nothing to the line counters)
 Invariants: total_lines == blank + comment + rule_lines, and
 rule_lines == valid + invalid + unsupported + disabled. A disabled rule is NOT counted
 in 'valid': 'valid' is the number of rules that stay active.
@@ -182,6 +184,7 @@ class LoadReport:
     unsupported: int = 0
     disabled: int = 0
     files_failed: int = 0
+    disabled_files: int = 0
 
     def to_dict(self) -> Dict[str, int]:
         return asdict(self)

@@ -1,8 +1,9 @@
 import logging
 from pathlib import Path
-from typing import Iterator, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
-from src.models.rule_report import LoadReport
+from src.models.rule import Rule
+from src.models.rule_report import LoadReport, ParseResult, RuleRecord
 
 logger = logging.getLogger(__name__)
 
@@ -79,3 +80,134 @@ def iter_rule_lines(path: Union[str, Path],
             report.total_lines += 1
             report.rule_lines += 1
         yield start, text
+
+
+ParseFn = Callable[[str, str, int], ParseResult]
+
+
+def load_rules(cfg: Dict[str, Any],
+               parse_fn: ParseFn,
+               extra_paths: Optional[Iterable[Union[str, Path]]] = None,
+               ) -> Tuple[List[Rule], LoadReport, List[RuleRecord]]:
+    """
+    Load every rule file and return (rules, report, records).
+
+    cfg: the full config from load_config(); only cfg["engine"] is used
+         (rule_files, disabled_sids).
+    parse_fn(text, file, line_no) -> ParseResult: injected so the Loader can be tested without
+         the real Parser. It is called once per rule line, never for blank or comment lines.
+    extra_paths: files from the command line (--rules). They are loaded after the configured
+         files and are always enabled.
+
+    Order: engine.rule_files in order (entries with enabled=false are not read and counted in
+    report.disabled_files), then extra_paths. A path that appears twice is loaded once.
+
+    Errors:
+    - An extra path that is not an existing regular file (missing, or a directory) raises
+      FileNotFoundError before anything is loaded (main.py turns it into exit code 1). A single
+      str is accepted and treated as one path.
+    - Any other file that cannot be read (missing, no permission, a directory, or failing part
+      way) gets logger.warning and files_failed += 1, and loading continues with the next file.
+      Rules already read from a file that fails part way are kept (today a file is read whole
+      before any line is yielded, so this only guards future changes).
+    - parse_fn raising, or not returning a ParseResult, gives invalid:internal_error for that
+      line; the next line is still processed.
+
+    Per rule line one RuleRecord is produced (valid / invalid / unsupported / disabled), and
+    rule_lines == valid + invalid + unsupported + disabled.
+    - A valid rule whose sid was already seen in an earlier valid rule (any file) becomes
+      invalid:duplicate_sid. The duplicate check runs BEFORE the disable check, so two rules
+      with the same disabled sid are not both reported as disabled.
+    - A valid rule whose sid is in engine.disabled_sids is recorded as disabled and is not
+      returned. Invalid and unsupported rules keep their status even if their sid is listed.
+    - Only valid rules register their sid: a later valid rule with the same sid as an earlier
+      invalid or unsupported one is still loaded.
+    """
+    engine = cfg["engine"]
+    disabled_sids = set(engine["disabled_sids"])
+    if isinstance(extra_paths, (str, Path)):
+        extra_paths = [extra_paths]
+    extras = [Path(p) for p in (extra_paths or [])]
+
+    for p in extras:
+        if not p.is_file():
+            raise FileNotFoundError(f"Rule file not found: {p}")
+
+    report = LoadReport()
+    rules: List[Rule] = []
+    records: List[RuleRecord] = []
+    seen_sids = set()
+    loaded_paths = set()
+
+    sources: List[Path] = []
+    for entry in engine["rule_files"]:
+        if not entry.get("enabled", True):
+            report.disabled_files += 1
+            logger.info("Rule file %s is disabled in config; skipped", entry["path"])
+            continue
+        sources.append(Path(entry["path"]))
+    sources.extend(extras)
+
+    for path in sources:
+        key = _path_key(path)
+        if key in loaded_paths:
+            logger.debug("Rule file %s listed twice; loaded once", path)
+            continue
+        loaded_paths.add(key)
+
+        file_label = str(path)
+        try:
+            for line_no, text in iter_rule_lines(path, report):
+                result = _safe_parse(parse_fn, text, file_label, line_no)
+                _collect(result, file_label, line_no, text, report, rules, records,
+                         seen_sids, disabled_sids)
+        except OSError as e:
+            report.files_failed += 1
+            logger.warning("Cannot read rule file %s: %s", path, e)
+
+    return rules, report, records
+
+
+def _path_key(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def _safe_parse(parse_fn: ParseFn, text: str, file: str, line_no: int) -> ParseResult:
+    try:
+        result = parse_fn(text, file, line_no)
+        if not isinstance(result, ParseResult):
+            raise TypeError(f"parse_fn returned {type(result).__name__}, expected ParseResult")
+        return result
+    except Exception as e:
+        logger.warning("Parser failed on %s:%d: %s", file, line_no, e)
+        return ParseResult("invalid", reason="invalid:internal_error")
+
+
+def _collect(result: ParseResult, file: str, line_no: int, text: str, report: LoadReport,
+             rules: List[Rule], records: List[RuleRecord], seen_sids: set,
+             disabled_sids: set) -> None:
+    status, reason, sid = result.status, result.reason, result.sid
+
+    if status == "valid":
+        sid = result.rule.sid
+        if sid in seen_sids:
+            status, reason = "invalid", "invalid:duplicate_sid"
+        else:
+            seen_sids.add(sid)
+            if sid in disabled_sids:
+                status, reason = "disabled", "disabled:sid"
+            else:
+                rules.append(result.rule)
+
+    if status == "valid":
+        report.valid += 1
+    elif status == "invalid":
+        report.invalid += 1
+    elif status == "unsupported":
+        report.unsupported += 1
+    else:
+        report.disabled += 1
+    records.append(RuleRecord(file, line_no, status, reason, sid, text))
