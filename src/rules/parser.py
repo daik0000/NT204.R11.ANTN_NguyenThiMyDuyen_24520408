@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import List, NamedTuple, Optional, Tuple
 
 from src.models.rule import (
-    PORT_MAX, PORT_MIN, RULE_ACTIONS, RULE_DIRECTIONS, RULE_PROTOCOLS, IpSpec, PortSpec,
+    ContentSpec, PORT_MAX, PORT_MIN, RULE_ACTIONS, RULE_DIRECTIONS, RULE_PROTOCOLS, IpSpec, PortSpec,
     RuleAction, RuleDirection, RuleProtocol,
 )
 from src.models.rule_report import is_valid_reason
@@ -422,3 +422,172 @@ def parse_identification(options: List[OptionPair], default_priority: int = 3) -
     if msg is None:
         raise RuleSyntaxError("invalid:missing_msg")
     return Identification(msg, sid, rev, classtype, priority, tuple(passive))
+
+
+# --- content and its modifiers -------------------------------------------------------------
+
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_CONTENT_MODIFIERS = ("nocase", "offset", "depth", "distance", "within")
+
+
+def decode_content(value: Optional[str]) -> Tuple[str, bytes]:
+    """
+    Decode the value of a content option into (raw, pattern).
+
+    value is the text after 'content:' and must be a double-quoted string. raw is the text between
+    the quotes exactly as written; pattern is the bytes to look for:
+    - \\; \\" and \\\\ stand for ';', '"' and a backslash; any other backslash pair is kept
+      as two characters.
+    - |41 42 7c| is a hex block (case-insensitive, blanks allowed anywhere inside, an even number
+      of digits). Text and hex blocks may be mixed: "GE|54|" is b"GET".
+    - Every other character is encoded as UTF-8, the same bytes it has in the rule file (which
+      the Loader reads as UTF-8): 'é' is b"\\xc3\\xa9". The replacement character U+FFFD, which the
+      Loader puts in place of a byte that was not valid UTF-8, is rejected so such a rule cannot
+      match by accident. Any raw byte can be written with a hex block.
+
+    Raises RuleSyntaxError('unsupported:content_negation') for content:!"...", and
+    RuleSyntaxError('invalid:bad_option_value:content') for a missing value, a value that is not
+    in double quotes, an unterminated or odd/non-hex block, U+FFFD or another unencodable
+    character, or an empty pattern.
+    """
+    if value is not None and value.startswith('!"'):
+        raise RuleSyntaxError("unsupported:content_negation")
+    if value is None or len(value) < 2 or value[0] != '"' or value[-1] != '"':
+        raise _bad_content()
+
+    raw = value[1:-1]
+    out = bytearray()
+    in_hex = False
+    hex_digits: List[str] = []
+    i, n = 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if in_hex:
+            if ch == "|":
+                if len(hex_digits) % 2:
+                    raise _bad_content()
+                out += bytes.fromhex("".join(hex_digits))
+                hex_digits = []
+                in_hex = False
+            elif ch in _HEX_DIGITS:
+                hex_digits.append(ch)
+            elif ch not in " \t":
+                raise _bad_content()
+            i += 1
+            continue
+        if ch == "|":
+            in_hex = True
+            i += 1
+        elif ch == "\\":
+            if i + 1 >= n:
+                raise _bad_content()
+            nxt = raw[i + 1]
+            out += _encode_text(nxt if nxt in ';"\\' else ch + nxt)
+            i += 2
+        elif ch == '"':
+            raise _bad_content()            # unescaped quote inside the string
+        else:
+            out += _encode_text(ch)
+            i += 1
+
+    if in_hex or not out:
+        raise _bad_content()
+    return raw, bytes(out)
+
+
+def _bad_content() -> RuleSyntaxError:
+    return RuleSyntaxError("invalid:bad_option_value:content")
+
+
+def _encode_text(text: str) -> bytes:
+    """UTF-8 bytes of rule text; U+FFFD (a decoding replacement) or a lone surrogate is rejected."""
+    if "\ufffd" in text:
+        raise _bad_content()
+    try:
+        return text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise _bad_content() from None
+
+
+def _modifier_value(key: str, value: Optional[str]):
+    """Parsed value of a content modifier, or raise invalid:bad_option_value:<key>."""
+    def bad() -> RuleSyntaxError:
+        return RuleSyntaxError(f"invalid:bad_option_value:{key}")
+
+    if key == "nocase":
+        if value is not None:
+            raise bad()
+        return True
+    if value is None:
+        raise bad()
+    if key == "distance":
+        negative = value.startswith("-")
+        number = _non_negative_int(value[1:] if negative else value)
+        if number is None:
+            raise bad()
+        return -number if negative else number
+    number = _non_negative_int(value)
+    if number is None or (key == "within" and number < 1):
+        raise bad()
+    return number
+
+
+def _non_negative_int(text: str) -> Optional[int]:
+    """int in 0..MAX_OPTION_INT from ASCII digits, else None (never raises)."""
+    if not _is_ascii_digits(text):
+        return None
+    try:
+        n = int(text)
+    except ValueError:
+        return None
+    return n if n <= MAX_OPTION_INT else None
+
+
+def parse_contents(options: List[OptionPair]) -> Tuple[ContentSpec, ...]:
+    """
+    Build the ContentSpec list from the options, keeping the rule order (distance/within are
+    relative to the previous content, so the order matters).
+
+    Each modifier (nocase, offset, depth, distance, within) applies to the content right before
+    it. offset/depth are integers >= 0, within >= 1, distance any integer (negative allowed),
+    nocase takes no value.
+
+    Raises RuleSyntaxError, first problem in rule order:
+      invalid:modifier_without_content  a modifier before any content
+      invalid:duplicate_option:<k>      the same modifier twice on one content
+      invalid:bad_option_value:<k>      bad modifier value, or bad content (<k> is 'content')
+    unsupported:content_negation is raised only at the end, so an invalid option anywhere wins
+    over it (the negated content itself is dropped and its modifiers are still checked).
+    """
+    contents: List[ContentSpec] = []
+    current: Optional[dict] = None            # the content being built (None = none yet)
+    negated_seen = False
+
+    def close() -> None:
+        if current is not None and not current["negated"]:
+            contents.append(ContentSpec(current["raw"], current["pattern"], **current["mods"]))
+
+    for key, value in options:
+        if key == "content":
+            close()
+            negated = False
+            raw, pattern = "", b""
+            try:
+                raw, pattern = decode_content(value)
+            except RuleSyntaxError as e:
+                if e.reason != "unsupported:content_negation":
+                    raise
+                negated = negated_seen = True
+            current = {"raw": raw, "pattern": pattern, "negated": negated, "mods": {}, "seen": set()}
+        elif key in _CONTENT_MODIFIERS:
+            if current is None:
+                raise RuleSyntaxError("invalid:modifier_without_content")
+            if key in current["seen"]:
+                raise RuleSyntaxError(f"invalid:duplicate_option:{key}")
+            current["seen"].add(key)
+            current["mods"][key] = _modifier_value(key, value)
+    close()
+
+    if negated_seen:
+        raise RuleSyntaxError("unsupported:content_negation")
+    return tuple(contents)
