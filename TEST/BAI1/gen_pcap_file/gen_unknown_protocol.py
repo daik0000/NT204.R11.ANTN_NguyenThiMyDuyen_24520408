@@ -11,5 +11,5 @@ payload = Raw(b"ping_payload_test")
 
 packet = eth/ip/icmp/payload
 
-wrpcap("TEST/part1-packet-capture-test/unknown_protocol/input.pcap", [packet])
-print("Created TEST/part1-packet-capture-test/unknown_protocol/input.pcap")
+wrpcap("TEST/BAI1/unknown_protocol/input.pcap", [packet])
+print("Created TEST/BAI1/unknown_protocol/input.pcap")

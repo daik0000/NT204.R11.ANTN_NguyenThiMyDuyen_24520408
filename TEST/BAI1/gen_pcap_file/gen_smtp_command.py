@@ -11,5 +11,5 @@ payload = Raw(b"EHLO client.example.com\r\nMAIL FROM:\r\n")
 
 packet = eth/ip/tcp/payload
 
-wrpcap("TEST/part1-packet-capture-test/smtp_command/input.pcap", [packet])
-print("Created TEST/part1-packet-capture-test/smtp_command/input.pcap")
+wrpcap("TEST/BAI1/smtp_command/input.pcap", [packet])
+print("Created TEST/BAI1/smtp_command/input.pcap")

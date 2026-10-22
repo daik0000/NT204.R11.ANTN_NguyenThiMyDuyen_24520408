@@ -11,5 +11,5 @@ payload = Raw(b"250-mail.example.com\r\n250-PIPELINING\r\n250 8BITMIME\r\n")
 
 packet = eth/ip/tcp/payload
 
-wrpcap("TEST/part1-packet-capture-test/smtp_response/input.pcap", [packet])
-print("Created TEST/part1-packet-capture-test/smtp_response/input.pcap")
+wrpcap("TEST/BAI1/smtp_response/input.pcap", [packet])
+print("Created TEST/BAI1/smtp_response/input.pcap")

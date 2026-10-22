@@ -20,7 +20,7 @@ Bài tập đầu tiên (module này) xây dựng tầng **Packet Capture & Pars
 
 ### Bài 1 — Packet Capture & Parser
 
-Hoàn thành: pipeline chạy end-to-end (`main.py` -> capture live/pcap -> network -> transport -> detector -> application -> chuẩn hóa `IDSEvent` -> ghi ra `output/events.jsonl`) và vượt qua toàn bộ 12 test case bắt buộc của đề bài (xem thư mục `TEST/part1-packet-capture-test/`).
+Hoàn thành: pipeline chạy end-to-end (`main.py` -> capture live/pcap -> network -> transport -> detector -> application -> chuẩn hóa `IDSEvent` -> ghi ra `output/events.jsonl`) và vượt qua toàn bộ 12 test case bắt buộc của đề bài (xem thư mục `TEST/BAI1/`).
 
 ### Bài 2 — Decoder, Preprocessor & Flow/Connection Tracker
 
@@ -68,7 +68,7 @@ Yêu cầu chung: timeout, giới hạn kích thước và chính sách bỏ qua
 
 | Issue | Nội dung | Trạng thái |
 |---|---|---|
-| #18 | Scaffold, gom test Bài 1 vào `TEST/part1-packet-capture-test/`, config loader, PCAP builder | Hoàn thành |
+| #18 | Scaffold, gom test Bài 1 vào `TEST/BAI1/`, config loader, PCAP builder | Hoàn thành |
 | #19 | Mở rộng `IDSEvent`, schema `Flow`, bổ sung HTTP/SMTP parser cho Decoder | Hoàn thành |
 | #20 | Decoder | Hoàn thành |
 | #22 | Preprocessor | Hoàn thành |
@@ -314,8 +314,8 @@ Ví dụ một dòng của `flows.jsonl` (minh hoạ, giá trị tự chọn; m�
 ├── config/
 │   └── settings.yaml   # Mapping port, policy (unknown/unsupported/invalid), cấu hình decoder, preprocessor và flow
 └── TEST/
-    ├── part1-packet-capture-test/ # 12 test case bắt buộc của Bài 1, mỗi case một thư mục riêng
-    ├── part2-decoder-to-flowtracker-test/
+    ├── BAI1/ # 12 test case bắt buộc của Bài 1, mỗi case một thư mục riêng
+    ├── BAI2/
     │   └── unit/              # unit test theo từng module
     └── helpers/
         └── pcap_builder.py    # Dựng PCAP có timestamp và MAC cố định phục vụ test

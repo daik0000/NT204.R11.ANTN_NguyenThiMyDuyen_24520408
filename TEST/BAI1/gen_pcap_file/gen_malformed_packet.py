@@ -12,5 +12,5 @@ payload = Raw(b"\x00\x01\x02\x03\x04")
 
 packet = eth/ip/udp/payload
 
-wrpcap("TEST/part1-packet-capture-test/malformed_packet/input.pcap", [packet])
-print("Created TEST/part1-packet-capture-test/malformed_packet/input.pcap")
+wrpcap("TEST/BAI1/malformed_packet/input.pcap", [packet])
+print("Created TEST/BAI1/malformed_packet/input.pcap")
