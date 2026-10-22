@@ -171,6 +171,7 @@ Tên file test phải duy nhất trong toàn repo (thư mục test không có `_
 - `output/rules_report.jsonl` được **ghi đè** mỗi lần chạy vì mô tả lần nạp rule hiện tại, khác với `events.jsonl`, `flows.jsonl` và `detections.jsonl` ghi nối tiếp.
 - Báo cáo ghi mọi dòng rule (`valid`, `invalid`, `unsupported`, `disabled`), rule hợp lệ có `reason: null`.
 - Một dòng rule bị lỗi parser có thể sinh hai cảnh báo: chi tiết ngoại lệ (`Parser failed on ...`) và mã lý do (`rejected: invalid:internal_error`).
+- Trong rule, `any` phải viết chữ thường (`ANY` bị từ chối là `bad_ip`/`bad_port`). IP chỉ nhận IPv4: địa chỉ đơn hoặc CIDR với prefix là số thập phân; không nhận netmask dạng chấm, số 0 đứng đầu, biến `$VAR`, phủ định `!` hay danh sách `[...]`.
 
 _(cập nhật dần)_
 

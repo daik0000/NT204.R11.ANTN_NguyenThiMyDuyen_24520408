@@ -1,5 +1,7 @@
+import ipaddress
 from typing import List, Optional, Tuple
 
+from src.models.rule import PORT_MAX, PORT_MIN, IpSpec, PortSpec
 from src.models.rule_report import is_valid_reason
 
 HEADER_TOKEN_COUNT = 7      # action proto src_ip src_port direction dst_ip dst_port
@@ -8,7 +10,11 @@ OptionPair = Tuple[str, Optional[str]]
 
 
 class RuleSyntaxError(Exception):
-    """A rule line that cannot be taken apart; `reason` is a code from rule_report.REASON_CODES."""
+    """
+    A rule line (or one of its parts) that is rejected; `reason` is an 'invalid:*' or
+    'unsupported:*' code from rule_report.REASON_CODES. The name is historical: it also
+    carries unsupported syntax, not only malformed input.
+    """
 
     def __init__(self, reason: str):
         if not is_valid_reason(reason):
@@ -94,3 +100,81 @@ def _split_options(body: str) -> List[OptionPair]:
             raise RuleSyntaxError("invalid:malformed_rule")
         options.append((key, value.strip() if sep else None))
     return options
+
+
+_UNSUPPORTED_PREFIXES = ("$", "!", "[")
+
+
+def _is_ascii_digits(s: str) -> bool:
+    return s.isascii() and s.isdigit()
+
+
+def parse_ip(token: str) -> IpSpec:
+    """
+    Parse the src_ip / dst_ip token of a rule header into an IpSpec (IPv4 only).
+
+    Accepted: 'any'; a single address ('10.0.0.5' = /32); CIDR ('192.168.1.0/24'). Host bits
+    are cleared, so '10.0.0.5/24' gives network 10.0.0.0. The prefix must be decimal digits
+    (a dotted netmask such as '/255.255.255.0' is rejected).
+
+    Raises RuleSyntaxError:
+      unsupported:ip_syntax  token starts with '$' (variable), '!' (negation) or '[' (list)
+      invalid:bad_ip         anything else that is not an IPv4 address/CIDR (300.1.1.1, 10.0.0,
+                             1.2.3.4/33, IPv6, empty, ...)
+    """
+    if token == "any":
+        return IpSpec(any=True)
+    if token.startswith(_UNSUPPORTED_PREFIXES):
+        raise RuleSyntaxError("unsupported:ip_syntax")
+
+    _, sep, prefix = token.partition("/")
+    if sep and not _is_ascii_digits(prefix):
+        raise RuleSyntaxError("invalid:bad_ip")
+    try:
+        net = ipaddress.ip_network(token, strict=False)
+    except ValueError:
+        raise RuleSyntaxError("invalid:bad_ip") from None
+    if net.version != 4:
+        raise RuleSyntaxError("invalid:bad_ip")
+    return IpSpec(any=False, network=int(net.network_address), mask=int(net.netmask))
+
+
+def parse_port(token: str) -> PortSpec:
+    """
+    Parse the src_port / dst_port token of a rule header into a PortSpec.
+
+    Accepted: 'any' = (0, 65535); '80' = (80, 80); '1:1024'; ':1023' = (0, 1023);
+    '5000:' = (5000, 65535). Only ASCII digits are accepted (no blanks, signs or Unicode digits).
+
+    Raises RuleSyntaxError:
+      unsupported:port_syntax  token starts with '$' (variable), '!' (negation) or '[' (list)
+      invalid:bad_port         not a number, outside 0..65535, lo > hi, more than one ':', empty
+    """
+    if token == "any":
+        return PortSpec(PORT_MIN, PORT_MAX)
+    if token.startswith(_UNSUPPORTED_PREFIXES):
+        raise RuleSyntaxError("unsupported:port_syntax")
+
+    lo_text, sep, hi_text = token.partition(":")
+    if not sep:
+        hi_text = lo_text                    # single port
+    elif ":" in hi_text or (not lo_text and not hi_text):
+        raise RuleSyntaxError("invalid:bad_port")
+
+    try:
+        lo = _port_number(lo_text, PORT_MIN) if sep else _port_number(lo_text, None)
+        hi = _port_number(hi_text, PORT_MAX)
+    except ValueError:
+        raise RuleSyntaxError("invalid:bad_port") from None
+    if not (PORT_MIN <= lo <= hi <= PORT_MAX):
+        raise RuleSyntaxError("invalid:bad_port")
+    return PortSpec(lo, hi)
+
+
+def _port_number(text: str, default: Optional[int]) -> int:
+    """int(text); an empty text gives `default` (open end of a range); ValueError otherwise."""
+    if text == "" and default is not None:
+        return default
+    if not _is_ascii_digits(text):
+        raise ValueError(text)
+    return int(text)
