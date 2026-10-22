@@ -1,7 +1,10 @@
 import ipaddress
-from typing import List, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
-from src.models.rule import PORT_MAX, PORT_MIN, IpSpec, PortSpec
+from src.models.rule import (
+    PORT_MAX, PORT_MIN, RULE_ACTIONS, RULE_DIRECTIONS, RULE_PROTOCOLS, IpSpec, PortSpec,
+    RuleAction, RuleDirection, RuleProtocol,
+)
 from src.models.rule_report import is_valid_reason
 
 HEADER_TOKEN_COUNT = 7      # action proto src_ip src_port direction dst_ip dst_port
@@ -178,3 +181,92 @@ def _port_number(text: str, default: Optional[int]) -> int:
     if not _is_ascii_digits(text):
         raise ValueError(text)
     return int(text)
+
+
+# Real Snort words that this engine does not implement -> unsupported, not invalid.
+UNSUPPORTED_ACTIONS = ("drop", "reject", "pass", "log", "sdrop", "activate", "dynamic")
+UNSUPPORTED_PROTOCOLS = (
+    "icmp", "icmpv6", "http", "dns", "smtp", "ftp", "ssh", "tls", "ssl", "smb",
+    "pop3", "imap", "telnet", "snmp", "sip", "tftp", "ntp", "dhcp", "rdp",
+)
+
+
+def parse_action(token: str) -> RuleAction:
+    """
+    'alert' only (lower case).
+    unsupported:action:<x>  drop | reject | pass | log | sdrop | activate | dynamic
+    invalid:bad_header      any other word
+    """
+    if token in RULE_ACTIONS:
+        return token
+    if token in UNSUPPORTED_ACTIONS:
+        raise RuleSyntaxError(f"unsupported:action:{token}")
+    raise RuleSyntaxError("invalid:bad_header")
+
+
+def parse_protocol(token: str) -> RuleProtocol:
+    """
+    'tcp' | 'udp' | 'ip' (lower case).
+    unsupported:protocol:<x>  icmp, http, dns, ... (application protocols are Snort 3 syntax and
+                              out of scope; see UNSUPPORTED_PROTOCOLS)
+    invalid:bad_header        any other word
+    """
+    if token in RULE_PROTOCOLS:
+        return token
+    if token in UNSUPPORTED_PROTOCOLS:
+        raise RuleSyntaxError(f"unsupported:protocol:{token}")
+    raise RuleSyntaxError("invalid:bad_header")
+
+
+def parse_direction(token: str) -> RuleDirection:
+    """
+    '->' | '<>'.
+    invalid:bad_direction  anything else, including '<-' (Snort 2 has no such operator)
+    """
+    if token in RULE_DIRECTIONS:
+        return token
+    raise RuleSyntaxError("invalid:bad_direction")
+
+
+class Header(NamedTuple):
+    action: RuleAction
+    protocol: RuleProtocol
+    src_ip: IpSpec
+    src_port: PortSpec
+    direction: RuleDirection
+    dst_ip: IpSpec
+    dst_port: PortSpec
+
+
+def parse_header(tokens: List[str]) -> Header:
+    """
+    Parse the 7 header tokens (action proto src_ip src_port direction dst_ip dst_port).
+
+    Every field is checked. ANY 'invalid:*' error wins over an 'unsupported:*' one. Within the
+    same kind, the first field in header order is reported. Raises RuleSyntaxError.
+
+    What the caller (parse_rule) must do with the two kinds of error:
+    - 'invalid:*' header: the line is not trusted; return invalid at once, do not look at options.
+    - 'unsupported:*' header: do NOT let the exception leave parse_rule. Remember it, still parse
+      the options to look for an 'invalid:*' error (invalid wins over unsupported), and only if the
+      options are clean report the header's unsupported reason, before any unsupported:keyword
+      found in the options.
+    """
+    if len(tokens) != HEADER_TOKEN_COUNT:
+        raise RuleSyntaxError("invalid:bad_header")
+    parsers = (parse_action, parse_protocol, parse_ip, parse_port,
+               parse_direction, parse_ip, parse_port)
+
+    values = []
+    first_unsupported: Optional[RuleSyntaxError] = None
+    for fn, token in zip(parsers, tokens):
+        try:
+            values.append(fn(token))
+        except RuleSyntaxError as e:
+            if e.reason.startswith("invalid:"):
+                raise
+            if first_unsupported is None:
+                first_unsupported = e
+    if first_unsupported is not None:
+        raise first_unsupported
+    return Header(*values)
