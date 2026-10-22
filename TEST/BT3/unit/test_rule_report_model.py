@@ -117,7 +117,7 @@ def test_load_report_defaults_and_dict():
     rep = LoadReport()
     assert rep.to_dict() == {
         "total_lines": 0, "blank": 0, "comment": 0, "rule_lines": 0, "valid": 0,
-        "invalid": 0, "unsupported": 0, "disabled": 0, "files_failed": 0,
+        "invalid": 0, "unsupported": 0, "disabled": 0, "files_failed": 0, "disabled_files": 0,
     }
     rep.valid += 1
     assert rep.to_dict()["valid"] == 1
