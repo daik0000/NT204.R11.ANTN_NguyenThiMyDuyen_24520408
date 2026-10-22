@@ -172,10 +172,13 @@ Tên file test phải duy nhất trong toàn repo (thư mục test không có `_
 - Báo cáo ghi mọi dòng rule (`valid`, `invalid`, `unsupported`, `disabled`), rule hợp lệ có `reason: null`.
 - Một dòng rule bị lỗi parser có thể sinh hai cảnh báo: chi tiết ngoại lệ (`Parser failed on ...`) và mã lý do (`rejected: invalid:internal_error`).
 - Trong rule, `any` phải viết chữ thường (`ANY` bị từ chối là `bad_ip`/`bad_port`). IP chỉ nhận IPv4: địa chỉ đơn hoặc CIDR với prefix là số thập phân; không nhận netmask dạng chấm, số 0 đứng đầu, biến `$VAR`, phủ định `!` hay danh sách `[...]`.
+- `flags` dùng chữ in hoa `FSRPAUCE` hoặc `0`; `!` đứng trước, `+` và `*` đứng sau chữ (`SA+`, `!SA`). Mặt nạ (`SA,12`) là `unsupported:flags_mask`. Vị trí của `+`/`*` theo tài liệu Snort chưa được đối chiếu (xem mục "Giới hạn đã biết").
 
 _(cập nhật dần)_
 
 **Giới hạn đã biết**
+
+- `flags:+SA` / `flags:*SA` (modifier `+`, `*` đứng trước chữ) hiện bị từ chối là `invalid:bad_option_value:flags`; cần đối chiếu tài liệu Snort của môn học rồi quyết định có nhận hay không.
 
 _(cập nhật dần)_
 

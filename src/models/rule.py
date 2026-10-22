@@ -28,8 +28,9 @@ FLOW_STATES = ("established", "not_established")
 FlagsMode = Literal["exact", "all", "any", "none"]
 FLAGS_MODES = ("exact", "all", "any", "none")
 
-# TCP flag letters accepted in FlagsSpec.flags (same letters as IDSEvent TCP flags).
-TCP_FLAG_NAMES = ("S", "A", "F", "R", "P", "U")
+# TCP flag letters accepted in FlagsSpec.flags: S=SYN A=ACK F=FIN R=RST P=PSH U=URG C=CWR E=ECE.
+# (IDSEvent stores the full names SYN, ACK, ...; the engine maps them to these letters.)
+TCP_FLAG_NAMES = ("S", "A", "F", "R", "P", "U", "C", "E")
 
 DsizeOp = Literal["eq", "lt", "gt", "range"]
 DSIZE_OPS = ("eq", "lt", "gt", "range")
@@ -124,7 +125,8 @@ class FlagsSpec:
 
     mode: 'exact' (flags set is exactly `flags`) | 'all' (+, all of them set, others free)
           | 'any' (*, at least one set) | 'none' (!, none of them set).
-    flags: letters from TCP_FLAG_NAMES ('S','A','F','R','P','U').
+    flags: letters from TCP_FLAG_NAMES. Only mode 'exact' may have an empty set: that is the
+          rule 'flags:0' (no flag set at all); the other modes need at least one letter.
     """
     mode: FlagsMode
     flags: frozenset
@@ -132,6 +134,7 @@ class FlagsSpec:
     def __post_init__(self) -> None:
         _require(self.mode in FLAGS_MODES, f"invalid flags mode: {self.mode!r}")
         _require(all(f in TCP_FLAG_NAMES for f in self.flags), f"invalid TCP flags: {sorted(self.flags)}")
+        _require(bool(self.flags) or self.mode == "exact", f"mode {self.mode!r} needs at least one flag")
 
 
 @dataclass(frozen=True)

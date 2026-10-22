@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import List, NamedTuple, Optional, Tuple
 
 from src.models.rule import (
-    ContentSpec, PORT_MAX, PORT_MIN, RULE_ACTIONS, RULE_DIRECTIONS, RULE_PROTOCOLS, IpSpec, PortSpec,
+    TCP_FLAG_NAMES,
+    ContentSpec, DsizeSpec, FlagsSpec, FlowSpec, PORT_MAX, PORT_MIN, RULE_ACTIONS, RULE_DIRECTIONS, RULE_PROTOCOLS, IpSpec, PortSpec,
     RuleAction, RuleDirection, RuleProtocol,
 )
 from src.models.rule_report import is_valid_reason
@@ -591,3 +592,154 @@ def parse_contents(options: List[OptionPair]) -> Tuple[ContentSpec, ...]:
     if negated_seen:
         raise RuleSyntaxError("unsupported:content_negation")
     return tuple(contents)
+
+
+# --- flow, flags, dsize --------------------------------------------------------------------
+
+_FLOW_ROLES = {"to_server": "to_server", "from_client": "to_server",
+               "to_client": "to_client", "from_server": "to_client"}
+_FLOW_STATES = ("established", "not_established")
+
+
+def parse_flow_value(value: Optional[str]) -> FlowSpec:
+    """
+    Value of flow: a comma-separated list, blanks ignored.
+
+    to_server / from_client -> role 'to_server'; to_client / from_server -> role 'to_client';
+    established / not_established -> state. Repeating the same word is harmless.
+
+    Raises RuleSyntaxError (invalid wins over unsupported):
+      invalid:bad_option_value:flow  no value, or an empty item ('a,,b', trailing comma)
+      invalid:conflicting_flow       both roles, or established with not_established
+      unsupported:flow_option:<x>    any other word (stateless, only_stream, no_stream, ...)
+    """
+    if value is None or not value.strip():
+        raise RuleSyntaxError("invalid:bad_option_value:flow")
+    items = [item.strip() for item in value.split(",")]
+    if any(not item for item in items):
+        raise RuleSyntaxError("invalid:bad_option_value:flow")
+
+    roles = {_FLOW_ROLES[i] for i in items if i in _FLOW_ROLES}
+    states = {i for i in items if i in _FLOW_STATES}
+    if len(roles) > 1 or len(states) > 1:
+        raise RuleSyntaxError("invalid:conflicting_flow")
+    for item in items:
+        if item not in _FLOW_ROLES and item not in _FLOW_STATES:
+            raise RuleSyntaxError(f"unsupported:flow_option:{item}")
+    return FlowSpec(role=next(iter(roles), None), state=next(iter(states), None))
+
+
+def parse_flags_value(value: Optional[str]) -> FlagsSpec:
+    """
+    Value of flags: letters from TCP_FLAG_NAMES (F S R P A U C E, upper case) with one optional
+    modifier, or the single character 0.
+
+        S, SA   mode 'exact'  the flag set is exactly these flags (the Snort default)
+        S+, SA+ mode 'all'    these flags are set, any others may be set too
+        S*, SA* mode 'any'    at least one of these flags is set
+        !S, !SA mode 'none'   none of these flags is set
+        0       mode 'exact' with an empty set: no flag at all
+
+    '+' and '*' go after the letters, '!' before them; only one modifier is allowed, and 0 takes
+    none. A ',' starts a mask ('SA,12'), which is not supported.
+
+    Raises RuleSyntaxError (invalid wins, so the part before ',' is checked first):
+      invalid:bad_option_value:flags  no value, a letter outside the set, a misplaced or doubled
+                                      modifier, a modifier with nothing to apply to
+      unsupported:flags_mask          a ',' mask after an otherwise valid value
+    """
+    def bad() -> RuleSyntaxError:
+        return RuleSyntaxError("invalid:bad_option_value:flags")
+
+    if value is None:
+        raise bad()
+    main, comma, _mask = value.partition(",")
+
+    mode = "exact"
+    if main.startswith("!"):
+        mode, main = "none", main[1:]
+    elif main.endswith("+"):
+        mode, main = "all", main[:-1]
+    elif main.endswith("*"):
+        mode, main = "any", main[:-1]
+
+    if main == "0":
+        if mode != "exact":
+            raise bad()
+        flags: frozenset = frozenset()
+    else:
+        if not main or any(ch not in TCP_FLAG_NAMES for ch in main):
+            raise bad()                     # also catches a second or misplaced + * !
+        flags = frozenset(main)
+
+    if comma:
+        raise RuleSyntaxError("unsupported:flags_mask")
+    return FlagsSpec(mode, flags)
+
+
+_DSIZE_EQ = re.compile(r"([0-9]+)")
+_DSIZE_CMP = re.compile(r"([<>])\s*([0-9]+)")
+_DSIZE_RANGE = re.compile(r"([0-9]+)\s*<>\s*([0-9]+)")
+
+
+def parse_dsize_value(value: Optional[str]) -> DsizeSpec:
+    """
+    Value of dsize (payload length in bytes): N, <N, >N or N<>M, blanks allowed around the
+    operator. N<>M is an inclusive range (N <= size <= M) and needs N <= M. Numbers are plain
+    ASCII digits up to 4294967295; a sign is not allowed, so negatives are invalid.
+
+    Raises RuleSyntaxError('invalid:bad_option_value:dsize') for anything else.
+    """
+    def bad() -> RuleSyntaxError:
+        return RuleSyntaxError("invalid:bad_option_value:dsize")
+
+    if value is None:
+        raise bad()
+    text = value.strip()
+
+    if m := _DSIZE_EQ.fullmatch(text):
+        op, a, b = "eq", m.group(1), None
+    elif m := _DSIZE_CMP.fullmatch(text):
+        op, a, b = ("lt" if m.group(1) == "<" else "gt"), m.group(2), None
+    elif m := _DSIZE_RANGE.fullmatch(text):
+        op, a, b = "range", m.group(1), m.group(2)
+    else:
+        raise bad()
+
+    a_num = _non_negative_int(a)
+    b_num = _non_negative_int(b) if b is not None else None
+    if a_num is None or (b is not None and (b_num is None or a_num > b_num)):
+        raise bad()
+    return DsizeSpec(op, a_num, b_num)
+
+
+def _single_option(options: List[OptionPair], name: str) -> Tuple[bool, Optional[str]]:
+    """(found, value) of option `name`; a second occurrence raises invalid:duplicate_option."""
+    found, value = False, None
+    for key, val in options:
+        if key == name:
+            if found:
+                raise RuleSyntaxError(f"invalid:duplicate_option:{name}")
+            found, value = True, val
+    return found, value
+
+
+def parse_flow(options: List[OptionPair]) -> Optional[FlowSpec]:
+    """FlowSpec from the 'flow' option, None when absent. Raises RuleSyntaxError."""
+    found, value = _single_option(options, "flow")
+    return parse_flow_value(value) if found else None
+
+
+def parse_flags(options: List[OptionPair]) -> Optional[FlagsSpec]:
+    """
+    FlagsSpec from the 'flags' option, None when absent. Raises RuleSyntaxError. Using flags on
+    a non-TCP rule (invalid:flags_requires_tcp) is checked by the caller, which knows the protocol.
+    """
+    found, value = _single_option(options, "flags")
+    return parse_flags_value(value) if found else None
+
+
+def parse_dsize(options: List[OptionPair]) -> Optional[DsizeSpec]:
+    """DsizeSpec from the 'dsize' option, None when absent. Raises RuleSyntaxError."""
+    found, value = _single_option(options, "dsize")
+    return parse_dsize_value(value) if found else None
