@@ -123,6 +123,57 @@ SYN thuần tới flow đang `CLOSED`/`RESET` còn trong thời gian giữ là t
 - Parse từng packet độc lập: không ghép lại TCP, không giải nén gzip/chunked, không giải mã TLS.
 - Nhánh dự phòng khi xuất flow (key trong bảng không khớp key dựng lại) chỉ xoá entry chứ không gọi callback; tình huống này không xảy ra khi bảng chỉ được ghi qua `update()`. Hướng cải tiến: truyền key của bảng vào `_export_flow`.
 
+### Bài 3 — Core Engine & Snort Rule Matching
+
+**Trạng thái:** đang thực hiện (skeleton + cấu hình đã có, engine chưa cài đặt).
+
+**Mục tiêu**
+
+Xây dựng Core Engine đối sánh `IDSEvent` / `Flow` với bộ rule kiểu Snort nạp từ file, rồi sinh cảnh báo. Signature nằm hoàn toàn trong file `.rules`, **không hard-code trong source code Python**.
+
+```
+Capture -> Parser -> Decoder -> Preprocessor -> Flow Tracker -> Rule Engine -> detections.jsonl / rules_report.jsonl
+```
+
+- `engine.enabled: false` trong `config/settings.yaml` đưa pipeline về đúng hành vi Bài 2 (phục vụ hồi quy).
+- Rule nạp theo thứ tự `engine.rule_files`; file lỗi hoặc không tồn tại chỉ cảnh báo, các file khác vẫn được nạp. Rule có thể tắt theo file (`enabled`) hoặc theo `engine.disabled_sids`.
+
+**Cấu hình** (section `engine` trong `config/settings.yaml`, kiểm tra ngay khi load, sai thì `ValueError`):
+
+| Khoá | Mặc định | Ý nghĩa |
+|---|---|---|
+| `enabled` | `true` | Bật/tắt engine |
+| `rule_files` | `[{path: config/rules/local.rules, enabled: true}]` | Danh sách file rule, đọc theo thứ tự |
+| `disabled_sids` | `[]` | Danh sách sid bị tắt |
+| `default_priority` | `3` | Priority dùng khi rule không khai báo (số nguyên >= 1) |
+
+**Cấu trúc**
+
+```
+src/rules/        # Parser/model của rule (đọc file .rules)
+src/engine/       # Core Engine: đối sánh rule và sinh detection
+config/rules/
+└── local.rules   # Rule mẫu chạy thử (bộ rule chấm nằm trong từng test case)
+TEST/BT3/         # Test case Bài 3: *.rules, input.pcap, events.jsonl, flows.jsonl, detections.jsonl, rules_report.jsonl
+└── unit/         # Unit test theo module (test_engine_config.py, ...)
+```
+
+**Cách chạy test**
+
+```bash
+pytest TEST/BT3
+```
+
+Tên file test phải duy nhất trong toàn repo (thư mục test không có `__init__.py`).
+
+**Quyết định thiết kế**
+
+_(cập nhật dần)_
+
+**Giới hạn đã biết**
+
+_(cập nhật dần)_
+
 ## Cách chạy
 
 Môi trường: Linux, Python 3.10+.
@@ -308,14 +359,20 @@ Ví dụ một dòng của `flows.jsonl` (minh hoạ, giá trị tự chọn; m�
 │   ├── decoder/               # [Part 2] charset.py, url_decoder.py, html_decoder.py, mime_decoder.py, decoder.py (orchestrator)
 │   ├── preprocessor/          # [Part 2] aliases.py, validator.py, normalizer.py, defaults.py, preprocessor.py (orchestrator)
 │   ├── flow/                  # [Part 2] Flow/Connection Tracker: flow_key.py, flow_table.py, tcp_state.py, timeout.py, tracker.py
+│   ├── rules/                 # [Part 3] Parser/model của rule Snort-style
+│   ├── engine/                # [Part 3] Core Engine: đối sánh rule, sinh detection
 │   └── utils/
 │       ├── safe.py            # @safe_parse (parser, trả status="MALFORMED") và @safe_stage (Decoder/Preprocessor/Tracker, ghi error_info và trả lại event)
 │       └── config.py          # Load, merge mặc định và validate config/settings.yaml
 ├── config/
-│   └── settings.yaml   # Mapping port, policy (unknown/unsupported/invalid), cấu hình decoder, preprocessor và flow
+│   ├── settings.yaml   # Mapping port, policy (unknown/unsupported/invalid), cấu hình decoder, preprocessor, flow và engine
+│   └── rules/
+│       └── local.rules # [Part 3] Rule mẫu chạy thử
 └── TEST/
     ├── BAI1/ # 12 test case bắt buộc của Bài 1, mỗi case một thư mục riêng
     ├── BAI2/
+    │   └── unit/              # unit test theo từng module
+    ├── BT3/                   # [Part 3] test case Bài 3
     │   └── unit/              # unit test theo từng module
     └── helpers/
         └── pcap_builder.py    # Dựng PCAP có timestamp và MAC cố định phục vụ test
@@ -329,5 +386,6 @@ Trong quá trình phát triển, Claude Sonnet 5.5 (Anthropic) được sử d�
 
 - **Bài 1 - Packet Capture**: vai trò **review code và đưa ra gợi ý chỉnh sửa** cho từng commit trước khi đưa lên repo - không viết thay toàn bộ code. Phần lớn code nộp bài do người thực hiện tự viết; Claude chỉ đọc lại, chỉ ra lỗi/rủi ro tiềm ẩn (ví dụ: sai lệch so với schema đã chốt, race condition, dữ liệu bị parse sai âm thầm) và đề xuất hướng sửa, việc quyết định áp dụng sửa nào do người thực hiện tự cân nhắc.
 - **Bài 2 - Decoder, Preprocessor và Flow Tracker**: lập kế hoạch Issue/commit (timeline) cho Bài 2; review từng commit như ở Bài 1; với một số file, Claude đề xuất đoạn mã sửa kèm unit test để người thực hiện đối chiếu, tự kiểm tra và quyết định áp dụng.
+- **Bài 3 - Core Engine & Snort Rule Matching**: _(cập nhật dần)_
 
 Khi mở Pull Request, GitHub Copilot đóng vai trò reviewer tự động - các comment của Copilot mang tính tham khảo, không tự động áp dụng thay đổi vào code.

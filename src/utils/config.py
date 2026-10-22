@@ -30,6 +30,12 @@ DEFAULT_CONFIG = {
         "max_active_flows": 100000,
         "sweep_interval_sec": 1.0,
     },
+    "engine": {
+        "enabled": True,
+        "rule_files": [{"path": "config/rules/local.rules", "enabled": True}],
+        "disabled_sids": [],
+        "default_priority": 3,
+    },
 }
 
 
@@ -60,7 +66,7 @@ def _check(cond, msg):
 
 
 def _check_unknown_keys(user):
-    """Catch typos in key names within the 3 sections of Exercise 2."""
+    """Catch typos in key names within the config sections."""
     for section, defaults in DEFAULT_CONFIG.items():
         sec = user.get(section) or {}
         _check(isinstance(sec, dict), f"'{section}' must be a mapping")
@@ -100,6 +106,24 @@ def _validate(cfg):
            "flow.max_active_flows must be an integer >= 1")
     _check(_is_number(flow["sweep_interval_sec"]) and flow["sweep_interval_sec"] >= 0,
            "flow.sweep_interval_sec must be a number >= 0")
+
+    eng = cfg["engine"]
+    _check(isinstance(eng["enabled"], bool), "engine.enabled must be true/false")
+    _check(isinstance(eng["rule_files"], list), "engine.rule_files must be a list")
+    for i, entry in enumerate(eng["rule_files"]):
+        where = f"engine.rule_files[{i}]"
+        _check(isinstance(entry, dict), f"{where} must be a mapping with 'path' and 'enabled'")
+        for key in entry:
+            _check(key in ("path", "enabled"), f"unknown key '{where}.{key}'")
+        _check(isinstance(entry.get("path"), str) and entry["path"].strip() != "",
+               f"{where}.path must be a non-empty string")
+        entry.setdefault("enabled", True)
+        _check(isinstance(entry["enabled"], bool), f"{where}.enabled must be true/false")
+    _check(isinstance(eng["disabled_sids"], list)
+           and all(_is_int(sid) for sid in eng["disabled_sids"]),
+           "engine.disabled_sids must be a list of integers")
+    _check(_is_int(eng["default_priority"]) and eng["default_priority"] >= 1,
+           "engine.default_priority must be an integer >= 1")
 
 
 def load_config(path=None):

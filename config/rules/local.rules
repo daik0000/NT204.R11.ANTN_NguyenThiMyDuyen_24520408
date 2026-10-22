@@ -1,0 +1,18 @@
+# Sample rules for trying out the engine (Snort-style syntax).
+# The rule sets used for grading live in each test case directory under TEST/BT3/.
+# Format: action proto src_ip src_port direction dst_ip dst_port (options)
+
+# 1. Directory traversal: "../" in the HTTP request line
+alert tcp any any -> any 80 (msg:"WEB Directory traversal attempt"; flow:to_server,established; content:"../"; sid:1000001; rev:1; priority:2;)
+
+# 2. SYN scan: a bare SYN (no ACK) sent to any TCP port
+alert tcp any any -> any any (msg:"SCAN TCP SYN packet"; flags:S; sid:1000002; rev:1; priority:3;)
+
+# 3. DNS: any UDP packet to port 53
+alert udp any any -> any 53 (msg:"DNS query to port 53"; sid:1000003; rev:1; priority:3;)
+
+# 4. HTTP POST request body reaching a web server
+alert tcp any any -> any 80 (msg:"WEB HTTP POST request"; content:"POST "; offset:0; depth:5; sid:1000004; rev:1; priority:3;)
+
+# 5. SMTP: MAIL FROM command on port 25
+alert tcp any any -> any 25 (msg:"SMTP MAIL FROM command"; content:"MAIL FROM"; nocase; sid:1000005; rev:1; priority:3;)

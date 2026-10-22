@@ -26,3 +26,10 @@ flow:
   tcp_close_requires_final_ack: false  # false: thấy đủ FIN hai chiều là CLOSED; true: chờ thêm ACK cuối
   max_active_flows: 100000 # chống phình bộ nhớ; vượt -> xuất flow lâu không hoạt động nhất
   sweep_interval_sec: 1.0 # quét timeout tối đa mỗi 1s event-time
+engine:
+  enabled: true # false: pipeline chạy đúng như Bài 2 (không nạp/đối sánh rule)
+  rule_files: # đọc theo thứ tự; file lỗi/không có -> warning, nạp tiếp file khác
+    - path: config/rules/local.rules
+      enabled: true
+  disabled_sids: [] # tắt rule theo sid
+  default_priority: 3 # dùng khi rule không có priority
