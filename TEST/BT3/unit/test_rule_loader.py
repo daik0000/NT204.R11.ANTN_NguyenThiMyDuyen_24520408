@@ -203,3 +203,10 @@ def test_invalid_sid_does_not_block_later_valid_rule(tmp_path):
     a = _write(tmp_path, "a.rules", "bad:7\nsid:7\n")
     rules, rep, _ = load_rules(_cfg([{"path": a, "enabled": True}]), FakeParser())
     assert [r.sid for r in rules] == [7] and (rep.invalid, rep.valid) == (1, 1)
+
+
+def test_rejected_rule_sid_does_not_make_later_valid_rule_a_duplicate(tmp_path):
+    a = _write(tmp_path, "a.rules", "bad:1\nunsup\nsid:1\nsid:9\n")
+    rules, rep, recs = load_rules(_cfg([{"path": a, "enabled": True}]), FakeParser())
+    assert [r.sid for r in rules] == [1, 9]
+    assert [r.status for r in recs] == ["invalid", "unsupported", "valid", "valid"]
