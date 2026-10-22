@@ -165,8 +165,10 @@ class Rule:
     protocol: 'tcp' | 'udp' | 'ip'.
     direction: '->' (src to dst only) | '<>' (either way).
     msg/sid/rev/classtype/priority: rule options; msg and sid are required,
-        rev defaults to 1, classtype is None when absent, priority is None when the
-        rule has none (the engine then applies engine.default_priority).
+        rev defaults to 1, classtype is None when absent. The parser fills priority with
+        engine.default_priority when the rule has none, so it is None only on rules built by hand.
+    passive_options: options that are only stored and never affect matching (reference,
+        metadata, gid), as (key, value) pairs in rule order; empty tuple when none.
     contents: content options in rule order (empty tuple when none).
     flow/flags/dsize: None when the option is absent.
     source_file/line_no: where the rule was read from (line_no is 1-based).
@@ -188,6 +190,7 @@ class Rule:
     flow: Optional[FlowSpec] = None
     flags: Optional[FlagsSpec] = None
     dsize: Optional[DsizeSpec] = None
+    passive_options: Tuple[Tuple[str, Optional[str]], ...] = ()
     source_file: str = ""
     line_no: int = 0
     raw: str = ""

@@ -1,4 +1,6 @@
 import ipaddress
+import re
+from dataclasses import dataclass
 from typing import List, NamedTuple, Optional, Tuple
 
 from src.models.rule import (
@@ -270,3 +272,153 @@ def parse_header(tokens: List[str]) -> Header:
     if first_unsupported is not None:
         raise first_unsupported
     return Header(*values)
+
+
+# --- Options -------------------------------------------------------------------------------
+#
+# Every option keyword falls in exactly one of these sets. A keyword in none of them is
+# UNSUPPORTED (unsupported:keyword:<k>), never silently ignored: ignoring it would make a rule
+# match more than its author meant (e.g. dropping pcre or flowbits widens the rule).
+
+# Identification options, parsed into Identification below.
+IDENTIFICATION_KEYWORDS = ("msg", "sid", "rev", "classtype", "priority")
+
+# Accepted but only stored (Rule.passive_options): they never change whether a packet matches.
+PASSIVE_KEYWORDS = ("reference", "metadata", "gid")
+
+# Options that take part in matching; each has its own parser (content and its modifiers, flow,
+# flags, dsize).
+MATCH_KEYWORDS = ("content", "nocase", "offset", "depth", "distance", "within",
+                  "flow", "flags", "dsize")
+
+SUPPORTED_KEYWORDS = IDENTIFICATION_KEYWORDS + PASSIVE_KEYWORDS + MATCH_KEYWORDS
+
+_CLASSTYPE_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+@dataclass(frozen=True)
+class Identification:
+    """msg/sid/rev/classtype/priority of a rule plus its stored-only options."""
+    msg: str
+    sid: int
+    rev: int
+    classtype: Optional[str]
+    priority: int
+    passive_options: Tuple[OptionPair, ...]
+
+
+def unsupported_keyword(options: List[OptionPair]) -> Optional[str]:
+    """
+    Reason code for the first option whose keyword is not in SUPPORTED_KEYWORDS, else None.
+    Keywords are case-sensitive, as in Snort ('SID' is not 'sid').
+    """
+    for key, _ in options:
+        if key not in SUPPORTED_KEYWORDS:
+            return f"unsupported:keyword:{key}"
+    return None
+
+
+def unquote_string(value: Optional[str]) -> Optional[str]:
+    """
+    Value of a "..." option as text, or None if it is not a well-formed quoted string.
+
+    The value must start and end with '"', with no other unescaped '"' inside. Escapes \\; \\" and
+    \\\\ become ';', '"' and a backslash; any other backslash pair is kept as written.
+    """
+    if value is None or len(value) < 2 or value[0] != '"' or value[-1] != '"':
+        return None
+    inner = value[1:-1]
+    out: List[str] = []
+    i, n = 0, len(inner)
+    while i < n:
+        ch = inner[i]
+        if ch == "\\":
+            if i + 1 >= n:
+                return None                  # the closing quote was itself escaped
+            nxt = inner[i + 1]
+            out.append(nxt if nxt in ';"\\' else ch + nxt)
+            i += 2
+            continue
+        if ch == '"':
+            return None                      # unescaped quote in the middle
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+MAX_OPTION_INT = 0xFFFFFFFF      # sid/rev/priority are 32-bit in Snort
+
+
+def _positive_int(text: Optional[str]) -> Optional[int]:
+    """int in 1..MAX_OPTION_INT from ASCII digits, else None (never raises)."""
+    if text is None or not _is_ascii_digits(text):
+        return None
+    try:
+        n = int(text)                    # a 5000-digit string raises ValueError on recent Python
+    except ValueError:
+        return None
+    return n if 1 <= n <= MAX_OPTION_INT else None
+
+
+def parse_identification(options: List[OptionPair], default_priority: int = 3) -> Identification:
+    """
+    Parse msg, sid, rev, classtype, priority and collect the stored-only options.
+
+    Options owned by other parsers (MATCH_KEYWORDS) and unknown keywords are ignored here; use
+    unsupported_keyword() for the latter.
+
+    Raises RuleSyntaxError, reporting the first problem found in rule order:
+      invalid:duplicate_option:<k>  msg, sid, rev, classtype or priority given twice
+      invalid:bad_sid               sid is not an integer in 1..4294967295 (or has no value)
+      invalid:bad_option_value:<k>  rev/priority not an integer in 1..4294967295, classtype not a plain name
+      invalid:missing_msg           msg absent, not in double quotes, or badly quoted
+    and, only when the options above are fine:
+      invalid:missing_sid           no sid
+      invalid:missing_msg           no msg
+    msg is unquoted ('\\;' '\\"' '\\\\' decoded). rev defaults to 1, priority to default_priority.
+    reference, metadata and gid may repeat and are kept verbatim; their values are not checked.
+    """
+    seen = set()
+    msg: Optional[str] = None
+    sid: Optional[int] = None
+    rev = 1
+    classtype: Optional[str] = None
+    priority = default_priority
+    passive: List[OptionPair] = []
+
+    for key, value in options:
+        if key in PASSIVE_KEYWORDS:
+            passive.append((key, value))
+            continue
+        if key not in IDENTIFICATION_KEYWORDS:
+            continue
+        if key in seen:
+            raise RuleSyntaxError(f"invalid:duplicate_option:{key}")
+        seen.add(key)
+
+        if key == "msg":
+            msg = unquote_string(value)
+            if msg is None:
+                raise RuleSyntaxError("invalid:missing_msg")
+        elif key == "sid":
+            sid = _positive_int(value)
+            if sid is None:
+                raise RuleSyntaxError("invalid:bad_sid")
+        elif key == "rev":
+            rev = _positive_int(value)
+            if rev is None:
+                raise RuleSyntaxError("invalid:bad_option_value:rev")
+        elif key == "priority":
+            priority = _positive_int(value)
+            if priority is None:
+                raise RuleSyntaxError("invalid:bad_option_value:priority")
+        else:                                # classtype
+            if value is None or not _CLASSTYPE_RE.fullmatch(value):
+                raise RuleSyntaxError("invalid:bad_option_value:classtype")
+            classtype = value
+
+    if sid is None:
+        raise RuleSyntaxError("invalid:missing_sid")
+    if msg is None:
+        raise RuleSyntaxError("invalid:missing_msg")
+    return Identification(msg, sid, rev, classtype, priority, tuple(passive))
