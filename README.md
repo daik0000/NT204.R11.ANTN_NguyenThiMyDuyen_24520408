@@ -174,10 +174,13 @@ Tên file test phải duy nhất trong toàn repo (thư mục test không có `_
 - Trong rule, `any` phải viết chữ thường (`ANY` bị từ chối là `bad_ip`/`bad_port`). IP chỉ nhận IPv4: địa chỉ đơn hoặc CIDR với prefix là số thập phân; không nhận netmask dạng chấm, số 0 đứng đầu, biến `$VAR`, phủ định `!` hay danh sách `[...]`.
 - `flags` dùng chữ in hoa `FSRPAUCE` hoặc `0`; `!` đứng trước, `+` và `*` đứng sau chữ (`SA+`, `!SA`). Mặt nạ (`SA,12`) là `unsupported:flags_mask`. Vị trí của `+`/`*` theo tài liệu Snort chưa được đối chiếu (xem mục "Giới hạn đã biết").
 - Thứ tự phân loại một dòng rule: cấu trúc, header, option được hỗ trợ, keyword ngoài phạm vi; `invalid` ở bất kỳ bước nào thắng mọi `unsupported`. Rule sai cấu trúc hoặc sai số token header không có `sid` trong báo cáo (`sid: null`); các lỗi khác mang `sid` nếu rule có đúng một `sid` hợp lệ. `content:!"..."` vẫn được parse đầy đủ để lỗi liên-option không bị che.
+- `RuleIndexer` (`src/rules/indexer.py`) là bộ lọc thô theo `protocol` + cổng đích, chỉ trả về tập ứng viên (superset): không xét IP, không xét cổng nguồn của rule `->`; rule qua được vẫn phải qua Matching Engine. Rule `<>` được đăng ký ở cả cổng nguồn lẫn cổng đích của rule để không bỏ sót gói đi chiều ngược. 
 
 _(cập nhật dần)_
 
 **Giới hạn đã biết**
+
+- Rule khai báo dải cổng được duyệt tuyến tính trong Indexer; hướng cải tiến là interval tree.
 
 - `flags:+SA` / `flags:*SA` (modifier `+`, `*` đứng trước chữ) hiện bị từ chối là `invalid:bad_option_value:flags`; cần đối chiếu tài liệu Snort của môn học rồi quyết định có nhận hay không.
 
