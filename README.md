@@ -181,6 +181,7 @@ _(cập nhật dần)_
 **Giới hạn đã biết**
 
 - Rule khai báo dải cổng được duyệt tuyến tính trong Indexer; hướng cải tiến là interval tree.
+- `match_header` đổi IP của gói sang số nguyên mỗi lần được gọi, tức mỗi lần thử một rule ứng viên chứ chưa phải một lần cho cả gói; hướng cải tiến là đổi một lần ở bước ghép rule rồi truyền số nguyên xuống. Event có IP không hợp lệ không khớp rule nào, kể cả `any any`.
 - Gói `RST` đến sau khi kết nối đã established có state sau gói là `RESET`, nên bị coi là `not_established` (Snort giữ `established`); vì vậy rule `flow:established` không khớp chính gói `RST` đó.
 - Vai trò `to_server`/`to_client` của flow TCP không bắt đầu bằng SYN (hoặc flow UDP) được suy ra từ cổng (cổng trong `ports`, rồi cổng nhỏ hơn); hai cổng bằng nhau thì `endpoint_a` là client. Khi flow đã bị xuất khỏi bảng (ví dụ gói đến muộn làm flow hết hạn), engine không đoán gì từ event: không có ngữ cảnh flow, mọi rule có `flow:` coi như không khớp, rule không có `flow:` không bị ảnh hưởng. Với hai cổng đều là cổng tạm (ephemeral), cách suy luận từ cổng có thể gán sai vai trò.
 
