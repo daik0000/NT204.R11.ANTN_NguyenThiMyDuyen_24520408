@@ -46,6 +46,35 @@ class FlowTracker:
         """Returns the number of currently active flows in the table."""
         return len(self.table)
 
+    def snapshot(self, event: Any) -> Optional[Flow]:
+        """
+        Read-only lookup of the flow an event belongs to (used by the rule engine, Part 3).
+
+        Returns the Flow in the active table, or None if the event is not tracked (the same
+        conditions under which update() skips it) or its flow is not in the table (never created
+        or already exported). It only reads: no touch() (LRU order is unchanged), no state change,
+        no statistics, no export, no clock. The returned Flow is the live object, so the caller
+        must not modify it.
+        """
+        ts = getattr(event, "timestamp", None)
+        trans_proto = str(getattr(event, "transport_protocol", "")).upper()
+        src_ip = getattr(event, "src_ip", None)
+        dst_ip = getattr(event, "dst_ip", None)
+        src_port = getattr(event, "src_port", None)
+        dst_port = getattr(event, "dst_port", None)
+
+        if (
+            getattr(event, "preprocess_status", None) == "invalid" or
+            not (type(ts) in (int, float) and math.isfinite(ts)) or
+            trans_proto not in ("TCP", "UDP") or
+            src_ip is None or dst_ip is None or
+            src_port is None or dst_port is None
+        ):
+            return None
+
+        entry = self.table.get(make_key(trans_proto, src_ip, src_port, dst_ip, dst_port))
+        return entry.flow if entry is not None else None
+
     def _get_flow_cfg(self) -> dict:
         """Safely extracts the 'flow' configuration dictionary."""
         raw_flow_cfg = self.cfg.get("flow", {})
