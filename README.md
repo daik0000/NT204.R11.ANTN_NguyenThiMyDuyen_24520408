@@ -181,6 +181,8 @@ _(cập nhật dần)_
 **Giới hạn đã biết**
 
 - Rule khai báo dải cổng được duyệt tuyến tính trong Indexer; hướng cải tiến là interval tree.
+- Gói `RST` đến sau khi kết nối đã established có state sau gói là `RESET`, nên bị coi là `not_established` (Snort giữ `established`); vì vậy rule `flow:established` không khớp chính gói `RST` đó.
+- Vai trò `to_server`/`to_client` của flow TCP không bắt đầu bằng SYN (hoặc flow UDP) được suy ra từ cổng (cổng trong `ports`, rồi cổng nhỏ hơn); hai cổng bằng nhau thì `endpoint_a` là client. Khi flow đã bị xuất khỏi bảng (ví dụ gói đến muộn làm flow hết hạn), engine không đoán gì từ event: không có ngữ cảnh flow, mọi rule có `flow:` coi như không khớp, rule không có `flow:` không bị ảnh hưởng. Với hai cổng đều là cổng tạm (ephemeral), cách suy luận từ cổng có thể gán sai vai trò.
 
 - `flags:+SA` / `flags:*SA` (modifier `+`, `*` đứng trước chữ) hiện bị từ chối là `invalid:bad_option_value:flags`; cần đối chiếu tài liệu Snort của môn học rồi quyết định có nhận hay không.
 
