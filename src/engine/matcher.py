@@ -1,8 +1,9 @@
 import ipaddress
 from typing import Any, Optional
 
+from src.flow.tcp_state import normalize_flags
 from src.models.engine_types import FlowContext
-from src.models.rule import IpSpec, PortSpec, Rule
+from src.models.rule import DsizeSpec, FlagsSpec, IpSpec, PortSpec, Rule
 
 
 def _ip_to_int(value: Any) -> Optional[int]:
@@ -94,3 +95,69 @@ def match_flow(rule: Rule, ctx: Optional[FlowContext]) -> bool:
     if flow.state == "not_established" and ctx.established:
         return False
     return True
+
+
+# Event flag names (as stored by the TCP parser) -> the letters used in rules.
+FLAG_LETTERS = {"FIN": "F", "SYN": "S", "RST": "R", "PSH": "P", "ACK": "A",
+                "URG": "U", "ECE": "E", "CWR": "C"}
+
+
+def match_flags(spec: Optional[FlagsSpec], event: Any) -> bool:
+    """
+    Do the TCP flags of the packet satisfy the rule's `flags:` option? Never raises.
+
+    The event's flag list is normalised with the Part 2 helper (normalize_flags: upper case,
+    list/tuple/set only) and turned into rule letters F S R P A U E C. Then, by spec.mode:
+      exact  the set of flags equals spec.flags (so flags:A does NOT match PSH/ACK or FIN/ACK;
+             flags:0, an empty spec, matches a packet with no flag at all)
+      all    spec.flags is a subset of the packet's flags (flags:A+)
+      any    the two sets intersect (flags:SF*)
+      none   the two sets are disjoint (flags:!S)
+    No spec (None) means no constraint: True. A packet that is not TCP, or whose flag list is
+    missing or not a list/tuple/set, gives False, since its flags are unknown. A flag name the
+    parser does not know is ignored (the Preprocessor already marks a packet with an unknown TCP flag
+    invalid, so such a packet does not reach the engine).
+    """
+    if spec is None:
+        return True
+    if str(getattr(event, "transport_protocol", "")).upper() != "TCP":
+        return False
+    fields = getattr(event, "transport_fields", None)
+    raw = fields.get("flags") if isinstance(fields, dict) else None
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return False
+
+    present = {FLAG_LETTERS[name] for name in normalize_flags(raw) if name in FLAG_LETTERS}
+    wanted = spec.flags
+    if spec.mode == "exact":
+        return present == wanted
+    if spec.mode == "all":
+        return wanted <= present
+    if spec.mode == "any":
+        return bool(wanted & present)
+    return not (wanted & present)                   # 'none'
+
+
+def match_dsize(spec: Optional[DsizeSpec], event: Any) -> bool:
+    """
+    Does the payload length satisfy the rule's `dsize:` option? Never raises.
+
+    n is len(event.payload), the real bytes (not payload_length, which can disagree); a missing
+    or empty payload is 0 bytes. eq: n == a; lt: n < a; gt: n > a; range: a <= n <= b (both ends
+    included). It measures one segment or datagram, TCP streams are not reassembled (as in Snort).
+    No spec (None) means no constraint: True. A payload that is not bytes-like cannot
+    be measured and gives False.
+    """
+    if spec is None:
+        return True
+    payload = getattr(event, "payload", None) or b""
+    if not isinstance(payload, (bytes, bytearray, memoryview)):
+        return False
+    n = len(payload)
+    if spec.op == "eq":
+        return n == spec.a
+    if spec.op == "lt":
+        return n < spec.a
+    if spec.op == "gt":
+        return n > spec.a
+    return spec.a <= n <= spec.b                    # 'range'
