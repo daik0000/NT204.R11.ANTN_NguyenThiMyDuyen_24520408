@@ -1,6 +1,7 @@
 import ipaddress
 from typing import Any, Optional
 
+from src.models.engine_types import FlowContext
 from src.models.rule import IpSpec, PortSpec, Rule
 
 
@@ -65,3 +66,31 @@ def match_header(rule: Rule, event: Any) -> bool:
         return (_ip_in(rule.dst_ip, src_ip) and _port_in(rule.dst_port, src_port)
                 and _ip_in(rule.src_ip, dst_ip) and _port_in(rule.src_port, dst_port))
     return False
+
+
+def match_flow(rule: Rule, ctx: Optional[FlowContext]) -> bool:
+    """
+    Does the flow context satisfy the rule's `flow:` option? Never raises.
+
+    - The rule has no flow option: True, whatever ctx is (even None).
+    - The rule has one but there is no context (ctx is None): False; nothing is guessed.
+    - role ('to_server' / 'to_client'), if the rule asks for one: ctx.role must be equal.
+      build_flow_context always sets a role today; a None role (defensive branch, for a context
+      built by hand or by a future change) matches no rule that names a role.
+    - state, if the rule asks for one: 'established' needs ctx.established True, 'not_established'
+      needs it False. ctx.established is the state AFTER the current packet (see
+      build_flow_context), so the first SYN is not established and the ACK that completes the
+      handshake already is.
+    """
+    flow = rule.flow
+    if flow is None:
+        return True
+    if ctx is None:
+        return False
+    if flow.role is not None and ctx.role != flow.role:      # a None role never equals a real one
+        return False
+    if flow.state == "established" and not ctx.established:
+        return False
+    if flow.state == "not_established" and ctx.established:
+        return False
+    return True
