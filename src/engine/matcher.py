@@ -1,8 +1,8 @@
 import ipaddress
-from typing import Any, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src.flow.tcp_state import normalize_flags
-from src.models.engine_types import FlowContext
+from src.models.engine_types import FAILED_STAGES, FlowContext, MatchResult
 from src.models.rule import DsizeSpec, FlagsSpec, IpSpec, PortSpec, Rule
 
 
@@ -161,3 +161,73 @@ def match_dsize(spec: Optional[DsizeSpec], event: Any) -> bool:
     if spec.op == "gt":
         return n > spec.a
     return spec.a <= n <= spec.b                    # 'range'
+
+
+# A content matcher is plugged in by the content stage (B3-7): given the rule and the event it returns
+# the list of match details (non-empty, same element format as Detection.matched) or None / [] when
+# the rule's contents do not match.
+ContentFn = Callable[[Rule, Any], Optional[List[Dict[str, Any]]]]
+
+STAGES = FAILED_STAGES        # one list of stage names, shared with MatchResult.failed_stage
+
+
+def match_rule(rule: Rule, event: Any, ctx: Optional[FlowContext],
+               content_fn: Optional[ContentFn] = None, stats: Any = None) -> MatchResult:
+    """
+    Test one rule against one packet, stage by stage, cheapest first:
+
+        header -> flow -> packet (flags, dsize) -> content
+
+    The first stage that fails ends the test; its name is MatchResult.failed_stage, so a rule that
+    was dropped before the costly content search can be told apart (and counted) from one that
+    failed in it. The order is fixed on purpose and must not be rearranged "for speed": cheap
+    checks first is what keeps content matching rare.
+
+    - flow: ctx is the FlowContext of the packet (None if there is none); see match_flow.
+    - packet: flags and dsize both have to hold.
+    - content: skipped for a rule without content; the result then carries
+      matches=[{"keyword": "header"}]. For a rule with content, content_fn(rule, event) is called
+      only when every earlier stage passed; its non-empty list becomes MatchResult.matches (the list and its dicts are copied), and
+      None / [] means the content stage failed. If the rule has content but no content_fn was given
+      the content cannot be confirmed, so that stage fails (the engine must therefore always pass
+      its content_fn; forgetting it would silently reject every rule that has content).
+    - stats: optional counter. For each stage actually evaluated it gets
+      stats.record_stage(stage, passed). Stages after a failure are not evaluated, so they are not
+      recorded. Note the meaning for counters: the flow stage runs for every rule that reaches it,
+      also for rules without a flow: option (which always pass), so "flow stage evaluated" does not
+      mean "rule uses flow:"; only the failures (passed=False) say a rule was rejected by flow.
+      The content stage is recorded only for rules that have content.
+
+    The matchers do not raise. An exception raised by content_fn is not caught here: the engine
+    isolates each rule.
+    """
+    def record(stage: str, passed: bool) -> None:
+        if stats is not None:
+            stats.record_stage(stage, passed)
+
+    def fail(stage: str) -> MatchResult:
+        return MatchResult(False, rule, failed_stage=stage)
+
+    ok = match_header(rule, event)
+    record("header", ok)
+    if not ok:
+        return fail("header")
+
+    ok = match_flow(rule, ctx)
+    record("flow", ok)
+    if not ok:
+        return fail("flow")
+
+    ok = match_flags(rule.flags, event) and match_dsize(rule.dsize, event)
+    record("packet", ok)
+    if not ok:
+        return fail("packet")
+
+    if not rule.contents:
+        return MatchResult(True, rule, matches=[{"keyword": "header"}])
+
+    found = content_fn(rule, event) if content_fn is not None else None
+    record("content", bool(found))
+    if not found:
+        return fail("content")
+    return MatchResult(True, rule, matches=[dict(m) for m in found])
