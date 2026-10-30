@@ -1,4 +1,6 @@
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
+
+from src.models.rule import ContentSpec
 
 
 def _as_bytes(payload: Any) -> Optional[bytes]:
@@ -44,3 +46,39 @@ def find(payload: Any, pattern: bytes, nocase: bool = False, start: int = 0,
             lowered = data.lower()
         return lowered.find(bytes(pattern).lower(), start, stop)
     return data.find(bytes(pattern), start, stop)
+
+
+def is_relative(spec: ContentSpec) -> bool:
+    """
+    True if the content is positioned relative to the previous match (it has distance or within).
+
+    The caller MUST classify every content with this before searching: find_absolute ignores
+    distance/within, so sending a relative content there would silently search the whole payload.
+    """
+    return spec.distance is not None or spec.within is not None
+
+
+def absolute_window(spec: ContentSpec) -> Tuple[int, Optional[int]]:
+    """
+    (start, end) of the search window of a content that is not relative, as `find` takes them.
+
+    start is `offset` (0 when absent). `depth` is the SIZE of the window counted from start, not an
+    absolute position: end = start + depth. Without depth, end is None (up to the end of the
+    payload). So offset:2; depth:2 is [2, 4), and depth:3 alone is [0, 3).
+    """
+    start = spec.offset or 0
+    end = None if spec.depth is None else start + spec.depth
+    return start, end
+
+
+def find_absolute(payload: Any, spec: ContentSpec, lowered: Optional[bytes] = None) -> int:
+    """
+    Where the content `spec` matches inside its absolute offset/depth window, or -1. Never raises.
+
+    Only offset and depth are applied. distance and within (a window relative to the previous
+    content) are handled separately; the Parser does not allow a content to carry both kinds, and
+    the caller must send a content here only when is_relative(spec) is False. An offset beyond the
+    payload gives an empty window, so -1; a depth that reaches past the payload is cut at its end.
+    """
+    start, end = absolute_window(spec)
+    return find(payload, spec.pattern, spec.nocase, start, end, lowered)
