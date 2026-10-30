@@ -1,4 +1,4 @@
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 from src.models.rule import ContentSpec
 
@@ -82,3 +82,77 @@ def find_absolute(payload: Any, spec: ContentSpec, lowered: Optional[bytes] = No
     """
     start, end = absolute_window(spec)
     return find(payload, spec.pattern, spec.nocase, start, end, lowered)
+
+
+def relative_window(spec: ContentSpec, prev_end: int) -> Tuple[int, Optional[int]]:
+    """
+    (start, end) of the search window of a content that has distance and/or within.
+
+    start is prev_end + distance (distance may be negative; the result is never below 0), where
+    prev_end is where the previous content's match ENDED (pos + len(pattern), not where it began),
+    or 0 for the first content of the rule. within is the SIZE of the window from start:
+    end = start + within, or None (up to the end of the payload) without within.
+    """
+    start = max(0, prev_end + (spec.distance or 0))
+    end = None if spec.within is None else start + spec.within
+    return start, end
+
+
+def match_chain(payload: Any, contents: Tuple[ContentSpec, ...],
+                lowered: Optional[bytes] = None) -> Optional[List[Tuple[int, int]]]:
+    """
+    Match all the contents of a rule, in rule order. Returns [(position, length), ...], one pair per
+    content (the first combination found), or None if the rule's contents do not all match.
+    A rule without content gives []. Odd payloads give None, not an exception. The recursion is as
+    deep as the number of contents, so an absurd rule with around 900 contents would raise
+    RecursionError; real rules have a handful, and the engine isolates each rule anyway.
+
+    A content that is not relative (no distance/within) is searched in its own offset/depth window,
+    wherever the previous content matched. A relative content is searched in the window of
+    relative_window() from the end of the previous match; the first content has prev_end = 0.
+
+    Backtracking: a content can occur at several places, and the first one is not always the right
+    one. For content i every occurrence in its window is tried in turn (the next search starts one
+    byte after the previous hit, so overlapping hits count), and for each the chain continues with
+    content i+1. The rule fails only when no occurrence leads to a complete chain. The outcome of
+    "content i from prev_end" depends on just those two values (for an absolute content only on i,
+    its window being fixed), so a failed state is remembered and never explored twice: the work
+    stays polynomial, whatever the payload. A packet is at most about 1460 bytes because TCP streams
+    are not reassembled, which keeps even the polynomial bound small.
+
+    The payload is lower-cased once, and only if some content has nocase.
+    """
+    if not contents:
+        return []
+    data = _as_bytes(payload)
+    if data is None:
+        return None
+    if lowered is None and any(c.nocase for c in contents):
+        lowered = data.lower()
+
+    failed: Set[Tuple[int, int]] = set()
+    path: List[Tuple[int, int]] = []
+
+    def search(i: int, prev_end: int) -> bool:
+        if i == len(contents):
+            return True
+        spec = contents[i]
+        relative = is_relative(spec)
+        state = (i, prev_end if relative else 0)      # an absolute content ignores prev_end
+        if state in failed:
+            return False
+        start, end = relative_window(spec, prev_end) if relative else absolute_window(spec)
+        length = len(spec.pattern)
+        while True:
+            pos = find(data, spec.pattern, spec.nocase, start, end, lowered)
+            if pos < 0:
+                break
+            path.append((pos, length))
+            if search(i + 1, pos + length):
+                return True
+            path.pop()
+            start = pos + 1                       # next occurrence, overlapping ones included
+        failed.add(state)
+        return False
+
+    return list(path) if search(0, 0) else None
