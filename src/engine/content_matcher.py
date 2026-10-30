@@ -1,6 +1,6 @@
 from typing import Any, List, Optional, Set, Tuple
 
-from src.models.rule import ContentSpec
+from src.models.rule import ContentSpec, Rule
 
 
 def _as_bytes(payload: Any) -> Optional[bytes]:
@@ -156,3 +156,36 @@ def match_chain(payload: Any, contents: Tuple[ContentSpec, ...],
         return False
 
     return list(path) if search(0, 0) else None
+
+
+def match_contents(rule: Rule, payload: Any) -> Optional[List[dict]]:
+    """
+    Match all the contents of `rule` against `payload`.
+
+    Returns None when they do not match. Otherwise one dict per content, in rule order, in the
+    format of Detection.matched:
+
+        {"keyword": "content", "value": <text as written in the rule>,
+         "offset": <where the match starts in the payload>, "length": <len(pattern)>}
+
+    offset and length come from the combination of positions that finally succeeded (after any
+    backtracking), not from the first position tried. `value` is ContentSpec.raw, the text between
+    the quotes in the rule file (e.g. "GE|54|"), so a log shows what the rule says even when the
+    pattern has hex parts or the match differed in case under nocase.
+
+    A rule with no content gives [] (nothing to report); match_rule never calls this for such a
+    rule. The payload is converted and lower-cased at most once for the whole rule.
+    """
+    chain = match_chain(payload, rule.contents)
+    if chain is None:
+        return None
+    return [{"keyword": "content", "value": spec.raw, "offset": pos, "length": length}
+            for spec, (pos, length) in zip(rule.contents, chain)]
+
+
+def content_fn(rule: Rule, event: Any) -> Optional[List[dict]]:
+    """
+    The hook for match_rule(..., content_fn=content_fn): match the rule's contents against
+    event.payload (the real application bytes). Returns what match_contents returns.
+    """
+    return match_contents(rule, getattr(event, "payload", None))
