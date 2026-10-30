@@ -80,8 +80,10 @@ TEST/
 
 - Cú pháp rule hỗ trợ có giới hạn: IPv4 (địa chỉ đơn hoặc CIDR), cổng đơn/dải; không hỗ trợ biến `$VAR`, phủ định `!`, danh sách `[...]`, `pcre` và các keyword ngoài phạm vi (các rule này được báo là `unsupported`, không bị bỏ qua âm thầm). `any` và các cờ TCP phải viết đúng chữ (`any` chữ thường, `flags` chữ in hoa `FSRPAUCE` hoặc `0`).
 - `flags`: `!` đứng trước chữ, `+` và `*` đứng sau chữ (`SA+`, `!SA`); mặt nạ (`SA,12`) là `unsupported`. Vị trí modifier theo tài liệu Snort chưa được đối chiếu, nên `flags:+SA` / `flags:*SA` hiện bị từ chối.
+- So khớp nhiều `content` có quan hệ tương đối dùng quay lui có ghi nhớ trạng thái đã thất bại, nên chi phí là đa thức (không bùng nổ theo số lần xuất hiện); do không ghép luồng TCP nên mỗi gói tối đa khoảng 1460 byte. Số `content` của một rule bị giới hạn bởi độ sâu đệ quy (khoảng 900), còn rule thật chỉ có vài `content`.
 - Indexer chỉ lọc thô theo protocol và cổng đích; dải cổng được duyệt tuyến tính (hướng cải tiến: interval tree). Event không có cổng (ICMP, ARP, thiếu tầng transport) không có rule ứng viên.
 - `dsize` đo payload của từng segment/datagram, không ghép lại luồng TCP (giống Snort). Gói TCP tới cổng 80 mang payload không phải HTTP bị Part 1 đánh `MALFORMED`, nên không tới được engine.
+- Payload được đổi sang `bytes` và hạ chữ thường (khi có `nocase`) một lần cho mỗi rule, chưa phải một lần cho mỗi gói; hướng cải tiến cùng loại với `match_header`: tính một lần ở engine rồi truyền xuống.
 - `match_header` đổi IP của gói sang số nguyên mỗi lần thử một rule ứng viên, chưa phải một lần cho cả gói. Event có IP không hợp lệ không khớp rule nào, kể cả `any any`.
 - Gói `RST` đến sau khi kết nối đã established có state `RESET` nên bị coi là `not_established` (Snort giữ `established`).
 - Vai trò `to_server`/`to_client` của flow TCP không bắt đầu bằng SYN (và của flow UDP) được suy ra từ cổng, nên có thể sai khi cả hai cổng đều là cổng tạm. Khi flow đã bị xuất khỏi bảng, engine không đoán: mọi rule có `flow:` coi như không khớp.
