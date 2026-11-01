@@ -158,7 +158,7 @@ def match_chain(payload: Any, contents: Tuple[ContentSpec, ...],
     return list(path) if search(0, 0) else None
 
 
-def match_contents(rule: Rule, payload: Any) -> Optional[List[dict]]:
+def match_contents(rule: Rule, payload: Any, lowered: Optional[bytes] = None) -> Optional[List[dict]]:
     """
     Match all the contents of `rule` against `payload`.
 
@@ -174,9 +174,10 @@ def match_contents(rule: Rule, payload: Any) -> Optional[List[dict]]:
     pattern has hex parts or the match differed in case under nocase.
 
     A rule with no content gives [] (nothing to report); match_rule never calls this for such a
-    rule. The payload is converted and lower-cased at most once for the whole rule.
+    rule. The payload is converted and lower-cased at most once for the whole rule; a caller that
+    tests many rules on one packet can pass `lowered` (= payload.lower()) to share it between them.
     """
-    chain = match_chain(payload, rule.contents)
+    chain = match_chain(payload, rule.contents, lowered)
     if chain is None:
         return None
     return [{"keyword": "content", "value": spec.raw, "offset": pos, "length": length}
