@@ -39,7 +39,7 @@ def run_cli(monkeypatch, tmp_path, packets, extra=()):
     extra = list(extra)
     if "--config" not in extra:  # the default config path does not exist under tmp_path
         default_cfg = tmp_path / "default.yaml"
-        default_cfg.write_text("flow:\n  udp_idle_timeout_sec: 60\n", encoding="utf-8")
+        default_cfg.write_text("flow:\n  udp_idle_timeout_sec: 60\nengine:\n  enabled: false\n", encoding="utf-8")
         extra += ["--config", str(default_cfg)]
     monkeypatch.setattr(sys, "argv", ["main.py", "--pcap", "x.pcap", *extra])
     cli.main()
@@ -135,7 +135,7 @@ def test_invalid_config_stops_the_program_with_code_1(monkeypatch, tmp_path):
 
 def test_custom_config_timeouts_reach_the_tracker(monkeypatch, tmp_path):
     cfg = tmp_path / "t.yaml"
-    cfg.write_text("flow:\n  udp_idle_timeout_sec: 5\n  sweep_interval_sec: 1\n", encoding="utf-8")
+    cfg.write_text("flow:\n  udp_idle_timeout_sec: 5\n  sweep_interval_sec: 1\nengine:\n  enabled: false\n", encoding="utf-8")
     run_cli(monkeypatch, tmp_path, [(1.0, pk(1)), (50.0, pk(2))], ["--config", str(cfg), *out_args(tmp_path)])
     assert sorted(r["close_reason"] for r in rows(tmp_path / "f.jsonl")) == ["flush", "idle_timeout"]
 
@@ -143,6 +143,6 @@ def test_custom_config_timeouts_reach_the_tracker(monkeypatch, tmp_path):
 def test_unknown_policy_from_the_custom_config_is_honoured(monkeypatch, tmp_path):
     monkeypatch.setattr(pl, "detect_application_protocol", lambda **kw: ("UNKNOWN", "none"))
     cfg = tmp_path / "u.yaml"
-    cfg.write_text("unknown_policy: skip\n", encoding="utf-8")
+    cfg.write_text("unknown_policy: skip\nengine:\n  enabled: false\n", encoding="utf-8")
     run_cli(monkeypatch, tmp_path, [(1.0, pk(1))], ["--config", str(cfg), *out_args(tmp_path)])
     assert rows(tmp_path / "e.jsonl") == [] and len(rows(tmp_path / "f.jsonl")) == 1

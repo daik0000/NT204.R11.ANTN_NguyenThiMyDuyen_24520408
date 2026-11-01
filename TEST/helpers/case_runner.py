@@ -2,6 +2,7 @@
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,12 +32,17 @@ def run_case(case_dir, config_path=None, pcap_name: str = "input.pcap",
     for p in (events_path, flows_path):  # never read leftovers from an earlier run
         p.unlink(missing_ok=True)
 
-    cmd = [sys.executable, "main.py", "--pcap", str(case_dir / pcap_name),
-           "--events-output", str(events_path), "--flows-output", str(flows_path)]
-    if config_path is not None:
-        cmd += ["--config", str(Path(config_path).resolve())]
+    with tempfile.TemporaryDirectory() as scratch:
+        # The rule engine (Part 3) is on by default; its outputs are not evidence of Part 1/2, so they
+        # go to a scratch directory instead of the case directory or the repository's output/.
+        cmd = [sys.executable, "main.py", "--pcap", str(case_dir / pcap_name),
+               "--events-output", str(events_path), "--flows-output", str(flows_path),
+               "--detections-output", str(Path(scratch) / "detections.jsonl"),
+               "--rules-report", str(Path(scratch) / "rules_report.jsonl")]
+        if config_path is not None:
+            cmd += ["--config", str(Path(config_path).resolve())]
 
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(f"main.py exited with {proc.returncode}\n--- stderr ---\n{proc.stderr}")
     return read_jsonl(events_path), read_jsonl(flows_path)

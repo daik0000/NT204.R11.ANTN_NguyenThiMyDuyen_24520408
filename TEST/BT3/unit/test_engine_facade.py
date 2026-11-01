@@ -4,7 +4,7 @@ import logging
 import pytest
 
 from pcap_builder import tcp_packet
-from src.engine.engine import Engine
+from src.engine.engine import Engine, engine_enabled
 from src.flow.tracker import FlowTracker
 from src.models.detection import Detection
 from src.pipeline.pipeline import _parse_packet_layers
@@ -316,3 +316,13 @@ def test_tracked_event_still_gets_its_context(tmp_path):
     tracker = FlowTracker({})
     eng = Engine(make_cfg([f]), tracker)
     assert [d.sid for d in feed(tracker, eng, *session()[:1])] == [1]
+
+
+@pytest.mark.parametrize("cfg, expected", [
+    (None, True), ({}, True), ({"engine": None}, True), ({"engine": {}}, True),
+    ({"engine": {"enabled": True}}, True), ({"engine": {"enabled": False}}, False),
+    ({"engine": {"rule_files": []}}, True),
+])
+def test_engine_enabled_is_decided_in_one_place(cfg, expected):
+    assert engine_enabled(cfg) is expected
+    assert Engine(cfg, None, None).enabled is expected               # the Engine and main.py cannot disagree

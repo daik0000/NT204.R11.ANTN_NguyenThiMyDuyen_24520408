@@ -46,6 +46,9 @@ pytest TEST/BT3                                       # chỉ test Part 3
 | `--events-output FILE` | `output/events.jsonl` | Nơi ghi `IDSEvent` |
 | `--flows-output FILE` | `output/flows.jsonl` | Nơi ghi flow record khi flow kết thúc |
 | `--bpf-filter EXPR` | `"tcp or udp"` | BPF filter, chỉ áp dụng cho `--interface` |
+| `--rules FILE` | (không) | File rule bổ sung, lặp được; được nạp sau `engine.rule_files`. File không tồn tại hoặc là thư mục: exit 1 |
+| `--detections-output FILE` | `output/detections.jsonl` | Nơi ghi Detection Event (ghi nối tiếp); không tạo khi engine tắt |
+| `--rules-report FILE` | `output/rules_report.jsonl` | Báo cáo mọi dòng rule với `status` và `reason`; được thay mới mỗi lần chạy, không tạo khi engine tắt |
 
 Khi kết thúc (hết pcap, `Ctrl+C` hoặc lỗi), chương trình luôn flush các flow còn lại ra `flows.jsonl`. Exit code là 0 khi chạy xong hoặc bị `Ctrl+C`, 1 khi lỗi.
 
@@ -82,6 +85,7 @@ TEST/
 - `flags`: `!` đứng trước chữ, `+` và `*` đứng sau chữ (`SA+`, `!SA`); mặt nạ (`SA,12`) là `unsupported`. Vị trí modifier theo tài liệu Snort chưa được đối chiếu, nên `flags:+SA` / `flags:*SA` hiện bị từ chối.
 - Engine vẫn đánh giá event có `status` `IGNORED` (chính sách `unknown_policy: skip` chỉ quyết định việc ghi log) và event có giao thức ứng dụng `UNKNOWN`, vì header transport và payload vẫn nguyên vẹn. Engine chỉ bỏ qua (và đếm `events_skipped`) event khi engine tắt, không có rule, `processing_action` là `skipped`/`dropped`, `preprocess_status` là `invalid` hoặc không có TCP/UDP và cổng đích; bộ đếm này chỉ do engine tính.
 - So khớp nhiều `content` có quan hệ tương đối dùng quay lui có ghi nhớ trạng thái đã thất bại, nên chi phí là đa thức (không bùng nổ theo số lần xuất hiện); do không ghép luồng TCP nên mỗi gói tối đa khoảng 1460 byte. Số `content` của một rule bị giới hạn bởi độ sâu đệ quy (khoảng 900), còn rule thật chỉ có vài `content`.
+- `--rules` trỏ cùng một đường dẫn hai lần, hoặc trùng với file trong `engine.rule_files`, thì chỉ được nạp một lần và báo cáo không có dòng lặp. Cùng `sid` nhưng ở file khác thì rule đến sau bị báo `invalid:duplicate_sid`. Khi engine tắt, `--rules` vẫn được kiểm tra đường dẫn (sai thì exit 1) rồi bị bỏ qua kèm cảnh báo `--rules ignored because the engine is disabled`.
 - Khi engine tắt (hoặc cấu hình không có section `engine`), `rules_report.jsonl` không được tạo cũng không bị xoá: file cũ còn trong thư mục output (nếu có) không phản ánh lần chạy hiện tại. Detection của một gói được ghi trước dòng event tương ứng trong `events.jsonl`; hai file độc lập, `packet_id` là khoá để tra ngược.
 - Indexer chỉ lọc thô theo protocol và cổng đích; dải cổng được duyệt tuyến tính (hướng cải tiến: interval tree). Event không có cổng (ICMP, ARP, thiếu tầng transport) không có rule ứng viên.
 - `dsize` đo payload của từng segment/datagram, không ghép lại luồng TCP (giống Snort). Gói TCP tới cổng 80 mang payload không phải HTTP bị Part 1 đánh `MALFORMED`, nên không tới được engine.

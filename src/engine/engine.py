@@ -17,6 +17,15 @@ from src.utils.config import DEFAULT_CONFIG
 logger = logging.getLogger(__name__)
 
 
+def engine_enabled(cfg: Optional[Dict[str, Any]]) -> bool:
+    """
+    The single place that decides whether the rule engine runs: engine.enabled, true when the engine
+    section or the key is missing, or the section is empty (`engine:` with nothing under it).
+    """
+    section = cfg.get("engine") if isinstance(cfg, dict) else None
+    return bool((section if isinstance(section, dict) else {}).get("enabled", True))
+
+
 class Engine:
     """
     The rule engine as the pipeline sees it: load, index and evaluate behind one object.
@@ -50,7 +59,7 @@ class Engine:
         self.report = LoadReport()
         self.records: List[RuleRecord] = []
 
-        self._enabled = bool(cfg["engine"]["enabled"])
+        self._enabled = engine_enabled(cfg)
         extras = list(extra_rule_paths) if extra_rule_paths is not None else []
         if not self._enabled and extras:
             for path in extras:                              # a typo is still an error, even if unused
