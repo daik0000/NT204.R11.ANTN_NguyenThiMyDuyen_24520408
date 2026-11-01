@@ -2,8 +2,10 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from src.engine.content_matcher import match_contents
+from src.engine.detection import make_detection
 from src.engine.matcher import match_rule
 from src.engine.stats import EvaluationStats
+from src.models.detection import Detection
 from src.models.engine_types import FlowContext, MatchResult
 from src.rules.indexer import RuleIndexer
 from src.rules.repository import RuleRepository
@@ -60,8 +62,25 @@ class EvaluationEngine:
         skipped. An event is skipped, and counted in stats.events_skipped, when the engine is
         disabled, there are no rules, or the event is not eligible: processing_action skipped or
         dropped, preprocess_status invalid, or no TCP/UDP transport protocol and ports. Never
-        raises for a failing rule.
+        raises for a failing rule. A match is counted (stats.matches) as soon as the rule matches.
         """
+        return self._run(event, flow_ctx, lambda rule, result: result)
+
+    def detect(self, event: Any, flow_ctx: Optional[FlowContext]) -> List[Detection]:
+        """
+        Like evaluate(), but returns the Detection Events, in rule order. This is what the pipeline
+        calls.
+
+        For each rule the steps match_rule -> make_detection -> record_match run in ONE guarded
+        block, so a rule counts as a match only when its Detection was really built. An error while
+        building it (a bad event, say) is counted as a rule error and never as a match: stats.matches
+        always equals the number of Detections returned, summed over the run.
+        """
+        return self._run(event, flow_ctx,
+                         lambda rule, result: make_detection(rule, event, flow_ctx, result.matches))
+
+    def _run(self, event: Any, flow_ctx: Optional[FlowContext], build) -> list:
+        """Shared loop of evaluate() and detect(); build(rule, result) makes what is returned per match."""
         if not self._enabled or len(self._repository) == 0 or not self._eligible(event):
             self.stats.record_event_skipped()
             return []
@@ -70,13 +89,14 @@ class EvaluationEngine:
         self.stats.record_event_evaluated(len(candidates))
         content_fn = self._content_fn_for(event)
 
-        matched: List[MatchResult] = []
+        matched: list = []
         for rule in candidates:
             try:
                 result = match_rule(rule, event, flow_ctx, content_fn, self.stats)
                 if result.matched:
+                    item = build(rule, result)               # may raise: then it is a rule error
                     self.stats.record_match()
-                    matched.append(result)
+                    matched.append(item)
             except Exception:                    # not BaseException: Ctrl+C must still stop us
                 self.stats.record_rule_error()
                 sid = getattr(rule, "sid", "?")

@@ -25,13 +25,16 @@ class EvaluationStats:
     rules_rejected_content  content stage completed and did not match
     matches                 candidates that matched completely (a Detection each)
     rule_errors             candidates whose evaluation raised an exception (isolated, then skipped);
-                            such a rule counts here only, never in a stage counter or in matches
+                            such a rule counts here only, never in rejected_* or in matches. This
+                            includes a rule that matched but whose Detection could not be built
 
     Every candidate ends in exactly one outcome, so after a run:
         candidate_rules == rules_rejected_header + rules_rejected_flow + rules_rejected_packet
                            + rules_rejected_content + matches + rule_errors
     (is_consistent() checks this), and
-        content_evaluations == rules_rejected_content + (matches of rules that have content).
+        content_evaluations == rules_rejected_content + (matches of rules that have content)
+    which holds as long as no rule fails AFTER its content stage completed (a Detection that could
+    not be built); such a rule is in content_evaluations and in rule_errors.
     The engine must call record_rule_error() exactly once for a failing rule and record_match()
     only for a rule that matched.
 

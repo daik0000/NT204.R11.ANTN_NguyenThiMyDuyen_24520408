@@ -8,6 +8,7 @@ from src.engine.flow_context import build_flow_context
 from src.engine.evaluator import EvaluationEngine
 from src.engine.stats import EvaluationStats
 from src.flow.tracker import FlowTracker
+from src.models.detection import Detection
 from src.models.engine_types import FlowContext
 from src.models.event import IDSEvent
 from src.pipeline.pipeline import _parse_packet_layers
@@ -329,3 +330,86 @@ def test_t13_one_packet_triggers_three_rules_in_order():
     assert s.events_evaluated == 4 and s.events_skipped == 0
     assert s.matches == 3                                  # the three handshake packets matched nothing
     assert s.candidate_rules >= 4 and s.is_consistent()
+
+
+# --- detect(): match -> Detection -> record_match in one guarded block --------------------------------------------------------------------
+
+def test_detect_returns_detections_in_rule_order():
+    eng = engine(r(30, 'content:"GET";'), r(10, 'content:"../";'), r(20, 'content:"nope";'), r(5, "flags:PA;"))
+    detections = eng.detect(pkt(), ctx())
+    assert [d.sid for d in detections] == [30, 10, 5]
+    assert all(isinstance(d, Detection) for d in detections)
+    assert detections[1].matched == [{"keyword": "content", "value": "../", "offset": 5, "length": 3}]
+    assert detections[2].matched == [{"keyword": "header"}]
+    assert (detections[0].flow_id, detections[0].flow_direction, detections[0].packet_id) == ("f", "to_server", 7)
+    assert eng.stats.matches == 3 and eng.stats.is_consistent()
+
+
+def test_detect_and_evaluate_agree_on_which_rules_match():
+    lines = [r(1, 'content:"GET";'), r(2, 'content:"zzz";'), r(3, "flags:PA;"), r(4, "flow:to_client;")]
+    by_detect = [d.sid for d in engine(*lines).detect(pkt(), ctx())]
+    by_evaluate = sids(engine(*lines).evaluate(pkt(), ctx()))
+    assert by_detect == by_evaluate == [1, 3]
+
+
+def test_detect_skips_the_same_events_as_evaluate():
+    eng = engine(r(1))
+    assert eng.detect(pkt(processing_action="dropped"), ctx()) == []
+    assert eng.stats.events_skipped == 1 and eng.stats.events_evaluated == 0
+
+
+def test_a_detection_that_cannot_be_built_is_a_rule_error_and_never_a_match(monkeypatch):
+    eng = engine(r(1, 'content:"GET";'), r(2, 'content:"GET";'), r(3, 'content:"GET";'))
+    real = evaluator_module.make_detection
+
+    def flaky(rule, event, ctx, matches):
+        if rule.sid == 2:
+            raise ValueError("cannot build")
+        return real(rule, event, ctx, matches)
+
+    monkeypatch.setattr(evaluator_module, "make_detection", flaky)
+    detections = eng.detect(pkt(), ctx())
+    s = eng.stats
+    assert [d.sid for d in detections] == [1, 3]
+    assert s.matches == len(detections) == 2                 # the numbers cannot drift from the output
+    assert s.rule_errors == 1
+    assert s.is_consistent()
+
+
+def test_stats_matches_always_equals_the_detections_returned_over_a_run(monkeypatch):
+    eng = engine(r(1, 'content:"GET";'), r(2, 'content:"GET";'))
+    real = evaluator_module.make_detection
+    monkeypatch.setattr(evaluator_module, "make_detection",
+                        lambda rule, event, c, m: (_ for _ in ()).throw(KeyError("x")) if event.packet_id % 2 else real(rule, event, c, m))
+    total = 0
+    for packet_id in range(1, 7):
+        total += len(eng.detect(pkt(packet_id=packet_id), ctx()))
+    assert eng.stats.matches == total == 6                    # 3 even packets x 2 rules
+    assert eng.stats.rule_errors == 6 and eng.stats.is_consistent()
+
+
+def test_an_event_missing_packet_id_gives_rule_errors_not_a_crash():
+    eng = engine(r(1, 'content:"GET";'), r(2, "flags:PA;"), r(3, 'content:"zzz";'))
+    event = pkt()
+    del event.packet_id
+    assert eng.detect(event, ctx()) == []
+    assert (eng.stats.rule_errors, eng.stats.matches) == (2, 0)      # rule 3 simply did not match
+    assert eng.stats.is_consistent()
+
+
+def test_evaluate_still_counts_a_match_without_building_anything(monkeypatch):
+    eng = engine(r(1))
+    monkeypatch.setattr(evaluator_module, "make_detection", lambda *a, **k: (_ for _ in ()).throw(AssertionError("x")))
+    assert sids(eng.evaluate(pkt(), ctx())) == [1] and eng.stats.matches == 1
+
+
+@pytest.mark.parametrize("exc", [KeyboardInterrupt, SystemExit])
+def test_detect_does_not_swallow_base_exceptions(monkeypatch, exc):
+    eng = engine(r(1))
+
+    def stop(*a, **k):
+        raise exc()
+
+    monkeypatch.setattr(evaluator_module, "make_detection", stop)
+    with pytest.raises(exc):
+        eng.detect(pkt(), ctx())
