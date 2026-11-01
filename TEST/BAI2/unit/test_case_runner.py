@@ -13,10 +13,12 @@ FAKE_MAIN = textwrap.dedent('''
     import argparse, json, sys
     p = argparse.ArgumentParser()
     p.add_argument("--pcap"); p.add_argument("--events-output"); p.add_argument("--flows-output"); p.add_argument("--config")
+    p.add_argument("--detections-output"); p.add_argument("--rules-report")
     a = p.parse_args()
     if a.pcap.endswith("bad.pcap"):
         sys.stderr.write("boom"); sys.exit(1)
-    open(a.events_output, "a").write(json.dumps({"cfg": a.config, "pcap": a.pcap}) + "\\n")
+    open(a.events_output, "a").write(json.dumps({"cfg": a.config, "pcap": a.pcap, "det": a.detections_output,
+                                                 "rep": a.rules_report}) + "\\n")
     open(a.flows_output, "a").write(json.dumps({"n": 1}) + "\\n")
 ''')
 
@@ -42,6 +44,13 @@ def test_run_case_forwards_config(fake_case):
     cfg.write_text("x: 1")
     ev, _ = cr.run_case(fake_case, config_path=cfg)
     assert ev[0]["cfg"] == str(cfg.resolve())
+
+
+def test_run_case_keeps_part_3_outputs_out_of_the_case_directory(fake_case):
+    ev, _ = cr.run_case(fake_case)
+    for key, name in (("det", "detections.jsonl"), ("rep", "rules_report.jsonl")):
+        path = Path(ev[0][key])
+        assert path.name == name and fake_case not in path.parents      # scratch directory, not the evidence
 
 
 def test_run_case_does_not_accumulate_across_runs(fake_case):

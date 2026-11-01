@@ -1,10 +1,13 @@
 import argparse
 import logging
 import sys
+from contextlib import ExitStack
+from pathlib import Path
 
 from src.capture.pcap_reader import read_pcap
 from src.capture.live_capture import capture_live
 from src.pipeline.pipeline import Pipeline
+from src.engine.engine import engine_enabled
 from src.logging.jsonl_logger import JSONLLogger
 from src.utils.config import load_config
 
@@ -38,6 +41,28 @@ def main():
         help="Path to the output JSONL file for logging exported flows (default: output/flows.jsonl)",
     )
     parser.add_argument(
+        "--rules",
+        action="append",
+        default=None,
+        metavar="FILE",
+        help="Extra Snort-style rules file; may be given several times. Added after engine.rule_files "
+             "in config. A path that does not exist or is a directory stops the program with exit code 1.",
+    )
+    parser.add_argument(
+        "--detections-output",
+        type=str,
+        default="output/detections.jsonl",
+        help="Path to the output JSONL file for Detection Events (default: output/detections.jsonl). "
+             "Not created when engine.enabled is false.",
+    )
+    parser.add_argument(
+        "--rules-report",
+        type=str,
+        default="output/rules_report.jsonl",
+        help="Path to the JSONL report of every rule line read, with its status and reason "
+             "(default: output/rules_report.jsonl). Replaced on each run; not written when engine.enabled is false.",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -55,6 +80,8 @@ def main():
 
     events_output_path = args.events_output or args.output or "output/events.jsonl"
     flows_output_path = args.flows_output or "output/flows.jsonl"
+    detections_output_path = args.detections_output or "output/detections.jsonl"
+    rules_report_path = args.rules_report or "output/rules_report.jsonl"
 
     packet_count = 0
     active_before_flush = 0
@@ -62,6 +89,13 @@ def main():
 
     try:
         cfg = load_config(args.config)
+
+        for rules_path in args.rules or []:
+            if Path(rules_path).is_dir():
+                raise FileNotFoundError(f"--rules: '{rules_path}' is a directory, not a rules file")
+            if not Path(rules_path).is_file():
+                raise FileNotFoundError(f"--rules: rules file not found: '{rules_path}'")
+        engine_on = engine_enabled(cfg)
 
         if args.pcap:
             if args.bpf_filter != "tcp or udp":
@@ -75,10 +109,16 @@ def main():
             parser.error("Invalid capture mode selected.")
             return
 
-        with JSONLLogger(file_path=events_output_path) as event_logger, \
-             JSONLLogger(file_path=flows_output_path) as flow_logger:
+        with ExitStack() as stack:
+            event_logger = stack.enter_context(JSONLLogger(file_path=events_output_path))
+            flow_logger = stack.enter_context(JSONLLogger(file_path=flows_output_path))
+            # With the engine off nothing is written for Part 3: the outputs are exactly those of Part 2.
+            detection_logger = (stack.enter_context(JSONLLogger(file_path=detections_output_path))
+                                if engine_on else None)
 
-            pipeline = Pipeline(cfg=cfg, event_logger=event_logger, flow_logger=flow_logger)
+            pipeline = Pipeline(cfg=cfg, event_logger=event_logger, flow_logger=flow_logger,
+                                detection_logger=detection_logger, extra_rule_paths=args.rules,
+                                rules_report_path=rules_report_path)
 
             try:
                 for timestamp, raw_bytes in capture_stream:
@@ -111,15 +151,29 @@ def main():
     finally:
         flows_exported = pipeline.flows_exported if pipeline is not None else 0
         counts = pipeline.preprocess_counts if pipeline is not None else {"valid": 0, "partial": 0, "invalid": 0}
+        engine = pipeline.engine if pipeline is not None else None
+        if engine is not None and engine.enabled:
+            logger.info("%s", engine.summary())
+            if not engine.stats.is_consistent():
+                logger.warning("Engine statistics are inconsistent: %s", engine.stats.summary())
+        rep = engine.report if engine is not None else None
+        stats = engine.stats if engine is not None else None
         logger.info(
             "System shutdown complete. Summary: packets=%d, flows=%d, active_before_flush=%d, "
-            "preprocess_status={valid=%d, partial=%d, invalid=%d}",
+            "preprocess_status={valid=%d, partial=%d, invalid=%d}, "
+            "rules(loaded=%d, invalid=%d, unsupported=%d), events_evaluated=%d, candidates=%d, detections=%d",
             packet_count,
             flows_exported,
             active_before_flush,
             counts.get("valid", 0),
             counts.get("partial", 0),
             counts.get("invalid", 0),
+            rep.valid if rep is not None else 0,
+            rep.invalid if rep is not None else 0,
+            rep.unsupported if rep is not None else 0,
+            stats.events_evaluated if stats is not None else 0,
+            stats.candidate_rules if stats is not None else 0,
+            pipeline.detections_written if pipeline is not None else 0,
         )
 
 
