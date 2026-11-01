@@ -9,6 +9,7 @@ from src.decoder.decoder import decode_event
 from src.preprocessor.preprocessor import preprocess_event
 from src.flow.tracker import FlowTracker
 from src.engine.engine import Engine
+from src.rules.report import write_report
 from src.utils.safe import safe_stage
 from src.parsers.network.ipv4_parser import parse_ipv4
 from src.parsers.transport.tcp_parser import parse_tcp
@@ -185,6 +186,9 @@ class Pipeline:
     A bare cfg such as {} gives the Part 2 pipeline, unchanged. With engine.enabled false the Engine
     exists but does nothing; --rules files (extra_rule_paths) are then ignored with a warning, although a
     path that does not exist is still a FileNotFoundError at start-up.
+    rules_report_path, if given, is where rules_report.jsonl is written once, at start-up, from the
+    rule records (every rule line with its status and reason); it is replaced on each run, and not
+    written at all when the engine is disabled. A failure to write it is only a warning.
     Detection Events go to detection_logger (detections.jsonl); a packet's detections are written
     before its line in events.jsonl (the two files are independent, packet_id links them). The Engine
     never changes a field of the event.
@@ -196,6 +200,7 @@ class Pipeline:
         flow_logger: Optional[Any] = None,
         detection_logger: Optional[Any] = None,
         extra_rule_paths: Optional[Iterable[Union[str, Path]]] = None,
+        rules_report_path: Optional[Union[str, Path]] = None,
     ):
         self.cfg: Dict[str, Any] = cfg if isinstance(cfg, dict) else {}
         self.event_logger = event_logger
@@ -213,6 +218,16 @@ class Pipeline:
         self.engine: Optional[Engine] = (
             Engine(self.cfg, self.flow_tracker, extra_rule_paths) if isinstance(self.cfg.get("engine"), dict) else None
         )
+        if self.engine is not None and self.engine.enabled and rules_report_path is not None:
+            self._write_rules_report(rules_report_path)
+
+    def _write_rules_report(self, path: Union[str, Path]) -> None:
+        """Writes rules_report.jsonl once (one line per rule line read). Never raises."""
+        try:
+            written = write_report(self.engine.records, str(path))
+            logger.info("Rule report: %d line(s) written to %s", written, path)
+        except Exception as e:
+            logger.warning("Failed to write the rule report to %s: %s", path, e)
 
     @safe_stage("engine", event_index=1)
     def _engine_stage(self, event: IDSEvent) -> IDSEvent:
@@ -302,7 +317,10 @@ class Pipeline:
             _record_error(event, "preprocessor", f"{type(exc).__name__}: {exc}")
 
     def flush(self) -> int:
-        """Flushes all remaining active flows from the FlowTracker."""
+        """
+        Flushes all remaining active flows from the FlowTracker. Detections are not affected: each
+        one is written the moment it is produced, so there is nothing to flush for them.
+        """
         try:
             return self.flow_tracker.flush()
         except Exception as e:

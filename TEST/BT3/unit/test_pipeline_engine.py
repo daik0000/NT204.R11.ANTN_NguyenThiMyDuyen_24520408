@@ -256,3 +256,125 @@ def test_when_the_flow_tracker_fails_the_engine_sees_no_flow(tmp_path, monkeypat
     out = pipe.process(frames[3].time, bytes(frames[3]), 4)
     assert out.flow_id is None and out.error_info["layer"] == "flow_tracker"
     assert [d.sid for d in detections.items if d.packet_id == 4] == [2]     # no flow: rule 1 stays silent
+
+
+# --- rules_report.jsonl and detections.jsonl as files -------------------------------------------------------------------
+
+def read_jsonl(path):
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f]
+
+
+def test_rules_report_is_written_once_at_start_up_with_every_rule_line(tmp_path):
+    f = write_rules(tmp_path, "# comment", rule(1, 'content:"GET";'), "garbage",
+                    'alert icmp any any -> any any (msg:"i"; sid:3;)', rule(4), rule(5))
+    out = tmp_path / "reports" / "rules_report.jsonl"
+    cfg = make_cfg([f], disabled_sids=[4])
+    Pipeline(cfg, rules_report_path=str(out))
+    rows = read_jsonl(out)                                        # before any packet is processed
+    assert [(r["line"], r["status"], r["reason"], r["sid"]) for r in rows] == [
+        (2, "valid", None, 1),
+        (3, "invalid", "invalid:malformed_rule", None),
+        (4, "unsupported", "unsupported:protocol:icmp", 3),
+        (5, "disabled", "disabled:sid", 4),
+        (6, "valid", None, 5),
+    ]
+    assert rows[0]["file"] == f and rows[1]["text"] == "garbage"
+    assert set(rows[0]) == {"file", "line", "status", "reason", "sid", "text"}
+
+
+def test_processing_packets_never_touches_the_rules_report(tmp_path):
+    f = write_rules(tmp_path, rule(1, 'content:"GET";'))
+    out = tmp_path / "rules_report.jsonl"
+    pipe = Pipeline(make_cfg([f]), detection_logger=Sink(), rules_report_path=str(out))
+    before = out.read_text(encoding="utf-8")
+    for i, frame in enumerate(session(), start=1):
+        pipe.process(frame.time, bytes(frame), i)
+    pipe.flush()
+    pipe.close()
+    assert out.read_text(encoding="utf-8") == before and len(before.splitlines()) == 1
+
+
+def test_the_rules_report_is_replaced_on_each_run(tmp_path):
+    f = write_rules(tmp_path, rule(1), rule(2))
+    out = tmp_path / "rules_report.jsonl"
+    Pipeline(make_cfg([f]), rules_report_path=str(out))
+    Pipeline(make_cfg([f]), rules_report_path=str(out))
+    assert len(read_jsonl(out)) == 2
+
+
+def test_engine_with_no_rules_still_writes_an_empty_report(tmp_path):
+    out = tmp_path / "rules_report.jsonl"
+    Pipeline(make_cfg([]), rules_report_path=str(out))
+    assert out.exists() and out.read_text() == ""
+
+
+def test_no_report_when_the_engine_is_disabled_or_absent(tmp_path):
+    f = write_rules(tmp_path, rule(1))
+    off, bare = tmp_path / "off.jsonl", tmp_path / "bare.jsonl"
+    Pipeline(make_cfg([f], enabled=False), rules_report_path=str(off))
+    cfg = make_cfg([f])
+    del cfg["engine"]
+    Pipeline(cfg, rules_report_path=str(bare))
+    assert not off.exists() and not bare.exists()
+
+
+def test_no_report_path_means_no_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    f = write_rules(tmp_path, rule(1))
+    Pipeline(make_cfg([f]))
+    assert not (tmp_path / "output").exists() and not (tmp_path / "rules_report.jsonl").exists()
+
+
+def test_a_report_that_cannot_be_written_is_only_a_warning(tmp_path, caplog):
+    import logging
+    f = write_rules(tmp_path, rule(1, 'content:"GET";'))
+    unwritable = tmp_path                                          # a directory, not a file
+    with caplog.at_level(logging.WARNING):
+        events, detections = Sink(), Sink()
+        pipe = Pipeline(make_cfg([f]), event_logger=events, detection_logger=detections,
+                        rules_report_path=str(unwritable))
+        for i, frame in enumerate(session(), start=1):
+            pipe.process(frame.time, bytes(frame), i)
+    assert any("rule report" in m.lower() for m in caplog.messages)
+    assert len(events.items) == 4 and [d.sid for d in detections.items] == [1]
+
+
+def test_a_detection_is_written_as_soon_as_it_is_produced_and_flush_changes_nothing(tmp_path):
+    f = write_rules(tmp_path, rule(1, 'content:"GET";'))
+    detections = Sink()
+    pipe = Pipeline(make_cfg([f]), detection_logger=detections)
+    frames = session()
+    for i, frame in enumerate(frames[:3], start=1):
+        pipe.process(frame.time, bytes(frame), i)
+    assert detections.items == []
+    pipe.process(frames[3].time, bytes(frames[3]), 4)
+    assert len(detections.items) == 1                              # visible before flush() or close()
+    pipe.flush()
+    assert len(detections.items) == 1 and not detections.closed
+    pipe.close()
+    assert detections.closed
+
+
+def test_detections_jsonl_has_one_line_per_detection_and_rules_report_is_separate(tmp_path):
+    from src.logging.jsonl_logger import JSONLLogger
+    f = write_rules(tmp_path, rule(10, 'content:"../";'), rule(20, "flags:PA;"), rule(30, 'content:"zzz";'))
+    det_path, rep_path = tmp_path / "det.jsonl", tmp_path / "rep.jsonl"
+    with JSONLLogger(file_path=str(det_path)) as det_log:
+        with Pipeline(make_cfg([f]), detection_logger=det_log, rules_report_path=str(rep_path)) as pipe:
+            for i, frame in enumerate(session(), start=1):
+                pipe.process(frame.time, bytes(frame), i)
+    detections, report = read_jsonl(det_path), read_jsonl(rep_path)
+    assert [d["sid"] for d in detections] == [10, 20]
+    assert len(report) == 3 and {r["status"] for r in report} == {"valid"}
+    assert all("status" not in d for d in detections)
+
+
+def test_closing_a_jsonl_logger_twice_is_safe(tmp_path):
+    # Pipeline.close() and the surrounding `with` both close the detection logger
+    from src.logging.jsonl_logger import JSONLLogger
+    log = JSONLLogger(file_path=str(tmp_path / "d.jsonl"))
+    log.close()
+    log.close()
+    with JSONLLogger(file_path=str(tmp_path / "e.jsonl")) as other:
+        other.close()                                              # closed inside, closed again by `with`
