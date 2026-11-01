@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional, Union
 from pathlib import Path
 import yaml
 
@@ -8,6 +8,8 @@ from src.models.flow import Flow
 from src.decoder.decoder import decode_event
 from src.preprocessor.preprocessor import preprocess_event
 from src.flow.tracker import FlowTracker
+from src.engine.engine import Engine
+from src.utils.safe import safe_stage
 from src.parsers.network.ipv4_parser import parse_ipv4
 from src.parsers.transport.tcp_parser import parse_tcp
 from src.parsers.transport.udp_parser import parse_udp
@@ -176,18 +178,30 @@ def _parse_packet_layers(
 
 class Pipeline:
     """
-    Stateful packet processing pipeline holding the FlowTracker and output loggers.
-    Executes stages sequentially: Parser -> Decoder -> Preprocessor -> FlowTracker.
+    Stateful packet processing pipeline holding the FlowTracker, the rule Engine and output loggers.
+    Executes stages sequentially: Parser -> Decoder -> Preprocessor -> FlowTracker -> Engine.
+
+    The Engine (Part 3) exists only when cfg has an "engine" section (load_config always adds one).
+    A bare cfg such as {} gives the Part 2 pipeline, unchanged. With engine.enabled false the Engine
+    exists but does nothing; --rules files (extra_rule_paths) are then ignored with a warning, although a
+    path that does not exist is still a FileNotFoundError at start-up.
+    Detection Events go to detection_logger (detections.jsonl); a packet's detections are written
+    before its line in events.jsonl (the two files are independent, packet_id links them). The Engine
+    never changes a field of the event.
     """
     def __init__(
         self,
         cfg: Optional[Dict[str, Any]] = None,
         event_logger: Optional[Any] = None,
         flow_logger: Optional[Any] = None,
+        detection_logger: Optional[Any] = None,
+        extra_rule_paths: Optional[Iterable[Union[str, Path]]] = None,
     ):
         self.cfg: Dict[str, Any] = cfg if isinstance(cfg, dict) else {}
         self.event_logger = event_logger
         self.flow_logger = flow_logger
+        self.detection_logger = detection_logger
+        self.detections_written: int = 0
         self.flows_exported: int = 0
         self.preprocess_counts: Dict[str, int] = {
             "valid": 0,
@@ -195,6 +209,37 @@ class Pipeline:
             "invalid": 0,
         }
         self.flow_tracker = FlowTracker(self.cfg, on_export=self._on_flow_export)
+        # A missing --rules file raises FileNotFoundError here, before any packet is read.
+        self.engine: Optional[Engine] = (
+            Engine(self.cfg, self.flow_tracker, extra_rule_paths) if isinstance(self.cfg.get("engine"), dict) else None
+        )
+
+    @safe_stage("engine", event_index=1)
+    def _engine_stage(self, event: IDSEvent) -> IDSEvent:
+        """
+        Stage 5: Rule Engine. Writes one line to detections.jsonl per Detection Event.
+        Guarded like the other Part 2 stages: an unexpected error is logged, recorded in
+        event.error_info only if that is still None, and the event carries on. The engine only
+        reads the event.
+        """
+        if self.engine is not None:
+            for detection in self.engine.process(event):
+                self._write_detection(detection)
+        return event
+
+    def _write_detection(self, detection: Any) -> None:
+        """Writes one Detection to detection_logger. Never raises."""
+        if self.detection_logger is None:
+            return
+        try:
+            if hasattr(self.detection_logger, "log"):
+                self.detection_logger.log(detection)
+            elif callable(self.detection_logger):
+                self.detection_logger(detection)
+            self.detections_written += 1
+        except Exception as e:
+            logger.warning("Failed to write detection sid=%s to detection_logger: %s",
+                           getattr(detection, "sid", None), e)
 
     def _on_flow_export(self, flow: Flow) -> None:
         """
@@ -267,7 +312,7 @@ class Pipeline:
     def close(self) -> None:
         """Flushes remaining flows and closes any attached loggers."""
         self.flush()
-        for sink in (self.event_logger, self.flow_logger):
+        for sink in (self.event_logger, self.flow_logger, self.detection_logger):
             if sink is not None and hasattr(sink, "close"):
                 try:
                     sink.close()
@@ -282,7 +327,7 @@ class Pipeline:
 
     def process(self, timestamp: float, raw_bytes: bytes, packet_id: int) -> IDSEvent:
         """
-        Processes a single packet through Parser -> Decoder -> Preprocessor -> FlowTracker.
+        Processes a single packet through Parser -> Decoder -> Preprocessor -> FlowTracker -> Engine.
         Enforces policy routing (skipped/dropped vs logged/flagged) and never allows
         an exception to escape.
         """
@@ -341,6 +386,7 @@ class Pipeline:
             event.flow_id = None
             event.direction = None
             event.flow_state = None
+            self._engine_stage(event)        # only counts the event as skipped; it never matches rules
             return event
 
         # Stage 4: Flow Tracker
@@ -357,7 +403,10 @@ class Pipeline:
             event.flow_state = None
             _record_error(event, "flow_tracker", f"{type(e).__name__}: {e}")
 
-        # Stage 5: Event Logging
+        # Stage 5: Rule Engine (every event that left the Flow Tracker; the engine drops ineligible ones)
+        event = self._engine_stage(event)
+
+        # Stage 6: Event Logging
         # unknown_policy=skip (status == "IGNORED") only decides that the event is not logged.
         if getattr(event, "status", None) != "IGNORED":
             self._write_event(event)

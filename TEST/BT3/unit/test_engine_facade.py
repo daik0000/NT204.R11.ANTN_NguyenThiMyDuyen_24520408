@@ -260,3 +260,59 @@ def test_stats_and_summary(tmp_path):
     assert "\n" not in line
     assert line.startswith("rules: loaded=1 invalid=1 unsupported=0 disabled=0 files_failed=0 | engine: ")
     assert "matches=1" in line
+
+
+# --- events without a flow get no flow context ---------------------------------------------------------------------------
+
+class SpyTracker:
+    def __init__(self, real):
+        self.real, self.snapshot_calls = real, 0
+
+    def update(self, event):
+        return self.real.update(event)
+
+    def snapshot(self, event):
+        self.snapshot_calls += 1
+        return self.real.snapshot(event)
+
+
+def test_an_event_without_flow_id_does_not_even_ask_the_tracker(tmp_path):
+    f = write(tmp_path, "a.rules", rule(1, "flow:established;"), rule(2, 'content:"GET";'))
+    real = FlowTracker({})
+    spy = SpyTracker(real)
+    eng = Engine(make_cfg([f]), spy)
+    frames = session()
+    for i, frame in enumerate(frames, start=1):               # the tracker now holds the live flow
+        real.update(event_of(frame, i))
+    event = event_of(frames[3], 4)                            # same 5-tuple, but never tracked: flow_id is None
+    assert event.flow_id is None
+    assert [d.sid for d in eng.process(event)] == [2]         # rule 1 (flow:) cannot match, rule 2 can
+    assert spy.snapshot_calls == 0
+
+
+def test_a_tracker_failure_leaves_rules_with_flow_unmatched_and_others_working(tmp_path):
+    f = write(tmp_path, "a.rules", rule(1, "flow:established;"), rule(2, 'content:"GET";'))
+    tracker = FlowTracker({})
+    eng = Engine(make_cfg([f]), tracker)
+    for i, frame in enumerate(session()[:3], start=1):
+        tracker.update(event_of(frame, i))                    # an established flow exists
+    event = event_of(session()[3], 4)
+    event.flow_id = event.direction = event.flow_state = None  # what the pipeline sets when update() raised
+    assert [d.sid for d in eng.process(event)] == [2]
+
+
+def test_a_flow_with_a_different_id_than_the_event_is_not_used(tmp_path):
+    f = write(tmp_path, "a.rules", rule(1, "flow:established;"))
+    tracker = FlowTracker({})
+    eng = Engine(make_cfg([f]), tracker)
+    event = event_of(session()[3], 4)
+    tracker.update(event)
+    event.flow_id = "some-other-flow"
+    assert eng.process(event) == []
+
+
+def test_tracked_event_still_gets_its_context(tmp_path):
+    f = write(tmp_path, "a.rules", rule(1, "flow:to_server;"))
+    tracker = FlowTracker({})
+    eng = Engine(make_cfg([f]), tracker)
+    assert [d.sid for d in feed(tracker, eng, *session()[:1])] == [1]

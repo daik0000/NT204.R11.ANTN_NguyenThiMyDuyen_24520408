@@ -81,11 +81,18 @@ class Engine:
         eligible, the engine is disabled or no rule is active (the evaluator counts those as skipped).
 
         Call it after FlowTracker.update(event), so that the flow context describes the state after
-        this packet. The tracker is only read.
+        this packet. The tracker is only read. An event with no flow_id (not tracked) gets no flow
+        context: rules with flow: do not match it, rules without flow: still can.
         """
         flow_ctx = None
-        if self._tracker is not None and self.rule_count and self._evaluator.enabled:
-            flow_ctx = build_flow_context(event, self._tracker.snapshot(event), self._cfg)
+        # An event the Flow Tracker did not track has flow_id None (skipped, dropped, invalid, or the
+        # tracker failed on it): it has no flow context, whatever another packet with the same 5-tuple
+        # left in the table, so the tracker is not even asked.
+        if (self._tracker is not None and self.rule_count and self._evaluator.enabled
+                and getattr(event, "flow_id", None) is not None):
+            flow = self._tracker.snapshot(event)
+            if flow is not None and flow.flow_id == event.flow_id:        # the flow the tracker assigned
+                flow_ctx = build_flow_context(event, flow, self._cfg)
         return self._evaluator.detect(event, flow_ctx)
 
     def summary(self) -> str:
