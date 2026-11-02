@@ -1,4 +1,6 @@
 """Helpers to run the IDS pipeline on one test case and read the results back."""
+import copy
+import functools
 import json
 import subprocess
 import sys
@@ -74,3 +76,93 @@ def run_events(events, cfg: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict]
         out.append(event.to_dict())
     tracker.flush()
     return out, flows
+
+
+# --- Part 3 (rule engine) ---
+
+def _resolve_rules(case_dir: Path, rules) -> List[Path]:
+    """
+    The rules files of a case. None -> every *.rules file in the case directory, sorted by name;
+    [] -> none; a path or a list of paths -> those (a relative path is looked up in the case directory).
+    """
+    if rules is None:
+        return sorted(case_dir.glob("*.rules"))
+    if isinstance(rules, (str, Path)):
+        rules = [rules]
+    out = []
+    for r in rules:
+        r = Path(r)
+        out.append(r if r.is_absolute() or not (case_dir / r).exists() else case_dir / r)
+    return out
+
+
+def _config_without_default_rules(config_path, scratch: Path) -> Path:
+    """
+    A copy of the config (config_path, or config/settings.yaml) with engine.rule_files emptied, so
+    that only the rules of the case are loaded and the sample config/rules/local.rules is not.
+    """
+    import yaml
+
+    base = Path(config_path).resolve() if config_path is not None else ROOT / "config" / "settings.yaml"
+    data = yaml.safe_load(base.read_text(encoding="utf-8")) if base.is_file() else {}
+    data = data if isinstance(data, dict) else {}
+    engine = data.get("engine") if isinstance(data.get("engine"), dict) else {}
+    engine["rule_files"] = []
+    data["engine"] = engine
+    out = scratch / "settings.yaml"
+    out.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return out
+
+
+def run_case_ids(case_dir, rules=None, config_path=None, pcap_name: str = "input.pcap",
+                 timeout: float = 120.0, check: bool = True) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dict]]:
+    """
+    Run `python main.py --pcap <case_dir>/<pcap_name> --rules ...` as a subprocess and return
+    (events, flows, detections, rules_report). The four JSONL files are written next to the pcap
+    (events.jsonl, flows.jsonl, detections.jsonl, rules_report.jsonl) so they stay as evidence, and old
+    ones are deleted first, so a leftover can never be mistaken for the result of this run.
+
+    rules: see _resolve_rules (default: every *.rules file of the case directory). The sample rules
+    of the config (config/rules/local.rules) are never loaded here: engine.rule_files is emptied in a
+    scratch copy of the config, so the case's detections come from the case's rules only.
+    config_path: a config to start from (its other settings, e.g. engine.disabled_sids, are kept).
+    check: raise RuntimeError (with stderr) if main.py exits non-zero; with False the files that
+    exist are still read.
+    """
+    case_dir = Path(case_dir).resolve()
+    paths = {name: case_dir / f"{name}.jsonl" for name in ("events", "flows", "detections", "rules_report")}
+    for p in paths.values():
+        p.unlink(missing_ok=True)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        config = _config_without_default_rules(config_path, Path(scratch))
+        cmd = [sys.executable, "main.py", "--pcap", str(case_dir / pcap_name), "--config", str(config),
+               "--events-output", str(paths["events"]), "--flows-output", str(paths["flows"]),
+               "--detections-output", str(paths["detections"]), "--rules-report", str(paths["rules_report"])]
+        for rules_file in _resolve_rules(case_dir, rules):
+            cmd += ["--rules", str(rules_file)]
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"main.py exited with {proc.returncode}\n--- stderr ---\n{proc.stderr}")
+    return tuple(read_jsonl(paths[name]) for name in ("events", "flows", "detections", "rules_report"))
+
+
+def run_rules_only(rules_path, cfg: Optional[Dict[str, Any]] = None):
+    """
+    Load and classify a rules file without any pcap (for the cases about the rule syntax). Returns
+    (LoadReport, records, rules): the counters, one RuleRecord per rule line (valid, invalid,
+    unsupported or disabled) and the list of active Rule objects, in file order.
+
+    rules_path: a path or a list of paths. cfg: the config to use (default: config/settings.yaml); it is
+    not modified, only its engine.rule_files is replaced by rules_path, so engine.disabled_sids and
+    engine.default_priority still apply. A file that cannot be read is counted in report.files_failed.
+    """
+    from src.rules.loader import load_rules
+    from src.rules.validator import parse_rule
+    from src.utils.config import load_config
+
+    cfg = copy.deepcopy(cfg) if cfg is not None else load_config(str(ROOT / "config" / "settings.yaml"))
+    paths = [rules_path] if isinstance(rules_path, (str, Path)) else list(rules_path)
+    cfg["engine"]["rule_files"] = [{"path": str(Path(p)), "enabled": True} for p in paths]
+    rules, report, records = load_rules(cfg, functools.partial(parse_rule, cfg=cfg))
+    return report, records, rules
