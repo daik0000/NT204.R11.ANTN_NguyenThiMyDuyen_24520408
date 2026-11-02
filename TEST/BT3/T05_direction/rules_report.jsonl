@@ -1,0 +1,2 @@
+{"file": "TEST/BT3/T05_direction/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 5001, "text": "alert tcp 10.0.0.5 any -> 192.168.1.20 80 (msg:\"T05 one way\"; sid:5001;)"}
+{"file": "TEST/BT3/T05_direction/rules.rules", "line": 3, "status": "valid", "reason": null, "sid": 5002, "text": "alert tcp 10.0.0.5 any <> 192.168.1.20 80 (msg:\"T05 both ways\"; sid:5002;)"}
