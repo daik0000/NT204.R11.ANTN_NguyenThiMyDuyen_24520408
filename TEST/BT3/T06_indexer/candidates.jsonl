@@ -1,0 +1,7 @@
+{"protocol": "tcp", "dst_port": 80, "sids": [6001, 6002, 6003, 6005]}
+{"protocol": "tcp", "dst_port": 443, "sids": [6002, 6003, 6005, 6007]}
+{"protocol": "tcp", "dst_port": 8443, "sids": [6003, 6005, 6007]}
+{"protocol": "tcp", "dst_port": 2000, "sids": [6003, 6005]}
+{"protocol": "udp", "dst_port": 53, "sids": [6004, 6005]}
+{"protocol": "udp", "dst_port": 5500, "sids": [6005, 6006]}
+{"protocol": "udp", "dst_port": 80, "sids": [6005]}
