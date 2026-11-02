@@ -99,6 +99,17 @@ def test_cli_path_is_relative_to_the_repository_root_when_inside_it(tmp_path):
     assert cr._cli_path(outside) == str(outside)
 
 
+def test_the_scratch_config_has_an_empty_rule_files_list_not_a_missing_key(tmp_path):
+    import yaml
+    for base in (None, tmp_path / "with_rules.yaml", tmp_path / "other.yaml"):
+        if base is not None:
+            base.write_text("engine:\n  rule_files:\n    - path: some.rules\n      enabled: true\n"
+                            if base.name == "with_rules.yaml" else "flow:\n  udp_idle_timeout_sec: 5\n", encoding="utf-8")
+        out = cr._config_without_default_rules(base, tmp_path)
+        data = yaml.safe_load(out.read_text(encoding="utf-8"))
+        assert data["engine"]["rule_files"] == []                      # [] (nothing), not a missing key (-> default file)
+
+
 def test_the_sample_rules_of_the_config_are_never_loaded(case):
     _, _, detections, report = cr.run_case_ids(case)
     assert {r["file"] for r in report} == {str(case / "rules.rules")}
