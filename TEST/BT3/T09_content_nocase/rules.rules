@@ -1,0 +1,6 @@
+# T09 - content and nocase against the payload "GET /Admin HTTP/1.1"
+alert tcp any any -> any 80 (msg:"T09 admin, case sensitive"; content:"admin"; sid:9001;)
+alert tcp any any -> any 80 (msg:"T09 admin with nocase"; content:"admin"; nocase; sid:9002;)
+alert tcp any any -> any 80 (msg:"T09 Admin, same case as the packet"; content:"Admin"; sid:9003;)
+alert tcp any any -> any 80 (msg:"T09 GET written in hex"; content:"|47 45 54|"; sid:9004;)
+alert tcp any any -> any 80 (msg:"T09 GET as text and hex, nocase"; content:"GE|54|"; nocase; sid:9005;)
