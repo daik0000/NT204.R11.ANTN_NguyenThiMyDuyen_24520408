@@ -128,7 +128,8 @@ def _config_without_default_rules(config_path, scratch: Path) -> Path:
 
 
 def run_case_ids(case_dir, rules=None, config_path=None, pcap_name: str = "input.pcap",
-                 timeout: float = 120.0, check: bool = True) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dict]]:
+                 timeout: float = 120.0, check: bool = True,
+                 stderr_out: Optional[List[str]] = None) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dict]]:
     """
     Run `python main.py --pcap <case_dir>/<pcap_name> --rules ...` as a subprocess and return
     (events, flows, detections, rules_report). The four JSONL files are written next to the pcap
@@ -142,6 +143,8 @@ def run_case_ids(case_dir, rules=None, config_path=None, pcap_name: str = "input
     config_path: a config to start from (its other settings, e.g. engine.disabled_sids, are kept).
     check: raise RuntimeError (with stderr) if main.py exits non-zero; with False the files that
     exist are still read.
+    stderr_out: if a list is given, main.py's stderr (its log lines, e.g. the warning for each rejected
+    rule) is appended to it as one string.
     """
     case_dir = Path(case_dir).resolve()
     paths = {name: case_dir / f"{name}.jsonl" for name in ("events", "flows", "detections", "rules_report")}
@@ -156,6 +159,8 @@ def run_case_ids(case_dir, rules=None, config_path=None, pcap_name: str = "input
         for rules_file in _resolve_rules(case_dir, rules):
             cmd += ["--rules", _cli_path(rules_file)]
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+    if stderr_out is not None:
+        stderr_out.append(proc.stderr)
     if check and proc.returncode != 0:
         raise RuntimeError(f"main.py exited with {proc.returncode}\n--- stderr ---\n{proc.stderr}")
     return tuple(read_jsonl(paths[name]) for name in ("events", "flows", "detections", "rules_report"))

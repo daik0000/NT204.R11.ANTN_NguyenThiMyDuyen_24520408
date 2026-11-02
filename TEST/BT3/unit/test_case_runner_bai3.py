@@ -64,6 +64,13 @@ def test_returns_events_flows_detections_and_the_rule_report(case):
     assert [(r["line"], r["status"]) for r in report] == [(1, "valid"), (2, "invalid"), (3, "valid")]
 
 
+def test_stderr_can_be_captured_to_see_the_warnings(case):
+    captured = []
+    cr.run_case_ids(case, stderr_out=captured)
+    assert len(captured) == 1 and "rejected: invalid:malformed_rule" in captured[0]
+    cr.run_case_ids(case)                                              # optional: nothing needed when not asked
+
+
 def test_the_four_files_are_left_next_to_the_pcap_as_evidence(case):
     cr.run_case_ids(case)
     for name in ("events", "flows", "detections", "rules_report"):

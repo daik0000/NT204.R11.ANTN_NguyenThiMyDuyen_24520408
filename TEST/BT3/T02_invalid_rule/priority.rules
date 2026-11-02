@@ -1,0 +1,3 @@
+alert icmp any any -> any any (msg:"x";)
+drop tcp any any -> any 99999 (msg:"x"; sid:2018;)
+alert tcp any any -> any 80 (msg:"x"; content:"ABCDE"; depth:2; pcre:"/a/"; sid:2019;)

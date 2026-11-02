@@ -1,0 +1,17 @@
+# T02 - invalid rules: one valid rule (sid 2001) followed by rules that each have exactly one mistake
+alert tcp any any -> any 80 (msg:"T02 valid rule"; content:"GET"; sid:2001;)
+alert tcp any any -> any 80 (msg:"T02 missing closing paren"; content:"GET"; sid:2002;
+alert tcp any any -> any 80
+alert tcp any any -> any 80 (msg:"T02 missing sid"; content:"GET";)
+alert tcp any any -> any 80 (msg:"T02 sid is not a number"; sid:abc;)
+alert tcp 300.1.1.1 any -> any 80 (msg:"T02 impossible IP"; sid:2006;)
+alert tcp any any -> any 70000 (msg:"T02 port above 65535"; sid:2007;)
+alert tcp any 100:50 -> any 80 (msg:"T02 reversed port range"; sid:2008;)
+alert tcp any any <- any 80 (msg:"T02 reversed arrow"; sid:2009;)
+alert tcp any any -> any 80 (msg:"T02 odd number of hex digits"; content:"|4|"; sid:2010;)
+alert tcp any any -> any 80 (msg:"T02 depth smaller than pattern"; content:"ABCDE"; depth:2; sid:2011;)
+alert tcp any any -> any 80 (msg:"T02 within smaller than pattern"; content:"GET"; content:"ABCDE"; distance:0; within:3; sid:2012;)
+alert tcp any any -> any 80 (msg:"T02 offset and distance together"; content:"GET"; offset:0; distance:1; sid:2013;)
+alert udp any any -> any 53 (msg:"T02 flags on a udp rule"; flags:S; sid:2014;)
+alert tcp any any -> any 80 (msg:"T02 contradicting flow"; flow:to_server,to_client; sid:2015;)
+alert tcp any any -> any 80 (msg:"T02 sid already used by the valid rule"; content:"POST"; sid:2001;)
