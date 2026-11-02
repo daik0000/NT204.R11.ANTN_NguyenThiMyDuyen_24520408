@@ -1,0 +1,11 @@
+# T12 variants: protocol ip with flags (a UDP datagram has none), flags on udp (invalid), more flag modifiers, dsize on udp
+alert ip any any <> any 9003 (msg:"T12 v1 ip rule with flags S"; flags:S; sid:12101;)
+alert udp any any <> any 9003 (msg:"T12 v2 flags on a udp rule"; flags:S; sid:12102;)
+alert udp any any <> any 9003 (msg:"T12 v3 udp payload of 10 bytes"; dsize:10; sid:12103;)
+alert ip any any <> any 9003 (msg:"T12 v4 no flag set at all"; flags:0; sid:12104;)
+alert tcp any any <> any 9003 (msg:"T12 v5 SYN not set"; flags:!S; sid:12105;)
+alert tcp any any <> any 9003 (msg:"T12 v6 FIN+ACK exactly"; flags:FA; sid:12106;)
+alert tcp any any <> any 9003 (msg:"T12 v7 PSH and ACK set, others free"; flags:PA+; sid:12107;)
+alert tcp any any <> any 9003 (msg:"T12 v8 SYN or ACK set"; flags:SA*; sid:12108;)
+alert tcp any any <> any 9003 (msg:"T12 v9 ACK set and more than 9 bytes"; dsize:>9; flags:A+; sid:12109;)
+alert ip any any <> any 9003 (msg:"T12 v10 ip rule, 10 bytes, tcp or udp"; dsize:10; sid:12110;)

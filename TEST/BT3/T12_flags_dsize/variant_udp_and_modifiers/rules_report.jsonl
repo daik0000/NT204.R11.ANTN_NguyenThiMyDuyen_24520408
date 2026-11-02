@@ -1,0 +1,10 @@
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 2, "status": "valid", "reason": null, "sid": 12101, "text": "alert ip any any <> any 9003 (msg:\"T12 v1 ip rule with flags S\"; flags:S; sid:12101;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 3, "status": "invalid", "reason": "invalid:flags_requires_tcp", "sid": 12102, "text": "alert udp any any <> any 9003 (msg:\"T12 v2 flags on a udp rule\"; flags:S; sid:12102;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 4, "status": "valid", "reason": null, "sid": 12103, "text": "alert udp any any <> any 9003 (msg:\"T12 v3 udp payload of 10 bytes\"; dsize:10; sid:12103;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 5, "status": "valid", "reason": null, "sid": 12104, "text": "alert ip any any <> any 9003 (msg:\"T12 v4 no flag set at all\"; flags:0; sid:12104;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 6, "status": "valid", "reason": null, "sid": 12105, "text": "alert tcp any any <> any 9003 (msg:\"T12 v5 SYN not set\"; flags:!S; sid:12105;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 7, "status": "valid", "reason": null, "sid": 12106, "text": "alert tcp any any <> any 9003 (msg:\"T12 v6 FIN+ACK exactly\"; flags:FA; sid:12106;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 8, "status": "valid", "reason": null, "sid": 12107, "text": "alert tcp any any <> any 9003 (msg:\"T12 v7 PSH and ACK set, others free\"; flags:PA+; sid:12107;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 9, "status": "valid", "reason": null, "sid": 12108, "text": "alert tcp any any <> any 9003 (msg:\"T12 v8 SYN or ACK set\"; flags:SA*; sid:12108;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 10, "status": "valid", "reason": null, "sid": 12109, "text": "alert tcp any any <> any 9003 (msg:\"T12 v9 ACK set and more than 9 bytes\"; dsize:>9; flags:A+; sid:12109;)"}
+{"file": "TEST/BT3/T12_flags_dsize/variants.rules", "line": 11, "status": "valid", "reason": null, "sid": 12110, "text": "alert ip any any <> any 9003 (msg:\"T12 v10 ip rule, 10 bytes, tcp or udp\"; dsize:10; sid:12110;)"}
