@@ -1,0 +1,1 @@
+{"file": "TEST/BT3/T07_header_reject/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 7001, "text": "alert tcp 10.0.0.5 any -> 192.168.1.20 80 (msg:\"T07 GET from 10.0.0.5 to 192.168.1.20:80\"; content:\"GET\"; sid:7001;)"}
