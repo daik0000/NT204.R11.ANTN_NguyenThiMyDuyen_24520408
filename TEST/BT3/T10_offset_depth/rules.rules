@@ -1,0 +1,7 @@
+# T10 - offset and depth against the 10-byte payload ABCDEFGHIJ (the window is [offset, offset + depth))
+alert udp any any -> any 9999 (msg:"T10 CD, offset 2 depth 2"; content:"CD"; offset:2; depth:2; sid:10001;)
+alert udp any any -> any 9999 (msg:"T10 CD, offset 3"; content:"CD"; offset:3; sid:10002;)
+alert udp any any -> any 9999 (msg:"T10 CD, depth 3"; content:"CD"; depth:3; sid:10003;)
+alert udp any any -> any 9999 (msg:"T10 CD, depth 4"; content:"CD"; depth:4; sid:10004;)
+alert udp any any -> any 9999 (msg:"T10 J, offset 9"; content:"J"; offset:9; sid:10005;)
+alert udp any any -> any 9999 (msg:"T10 J, offset 10"; content:"J"; offset:10; sid:10006;)
