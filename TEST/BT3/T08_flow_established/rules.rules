@@ -1,0 +1,7 @@
+# T08 - flow: to_server / to_client / established, with content or flags to see the packet that fires
+alert tcp any any -> any any (msg:"T08 request on an established flow"; flow:to_server,established; content:"GET"; sid:8001;)
+alert tcp any any -> any any (msg:"T08 response on an established flow"; flow:to_client,established; content:"HTTP/1.1 200"; sid:8002;)
+alert tcp any any -> any any (msg:"T08 SYN before the handshake is done"; flow:to_server,not_established; flags:S; sid:8003;)
+alert tcp any any -> any any (msg:"T08 SYN/ACK before the handshake is done"; flow:to_client,not_established; flags:SA; sid:8004;)
+alert tcp any any -> any any (msg:"T08 wrong way round: GET is never sent to the client"; flow:to_client,established; content:"GET"; sid:8005;)
+alert udp any any <> any 53 (msg:"T08 udp before any reply"; flow:not_established; sid:8006;)
