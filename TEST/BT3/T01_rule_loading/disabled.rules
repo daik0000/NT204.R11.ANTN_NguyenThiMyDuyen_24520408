@@ -1,0 +1,2 @@
+# this file is listed in the config with enabled: false, so it is never read
+alert tcp any any -> any 443 (msg:"T01 rule in a disabled file"; sid:2001;)

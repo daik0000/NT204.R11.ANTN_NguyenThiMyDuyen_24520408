@@ -80,6 +80,19 @@ def run_events(events, cfg: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict]
 
 # --- Part 3 (rule engine) ---
 
+def _cli_path(path) -> str:
+    """
+    How a path is given to main.py: relative to the repository root (where main.py runs) when the file
+    is inside it, so the rules_report.jsonl evidence holds no machine-specific absolute path; otherwise
+    as it is.
+    """
+    path = Path(path)
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _resolve_rules(case_dir: Path, rules) -> List[Path]:
     """
     The rules files of a case. None -> every *.rules file in the case directory, sorted by name;
@@ -122,7 +135,8 @@ def run_case_ids(case_dir, rules=None, config_path=None, pcap_name: str = "input
     (events.jsonl, flows.jsonl, detections.jsonl, rules_report.jsonl) so they stay as evidence, and old
     ones are deleted first, so a leftover can never be mistaken for the result of this run.
 
-    rules: see _resolve_rules (default: every *.rules file of the case directory). The sample rules
+    rules: see _resolve_rules (default: every *.rules file of the case directory); files inside the
+    repository are passed relative to its root (see _cli_path). The sample rules
     of the config (config/rules/local.rules) are never loaded here: engine.rule_files is emptied in a
     scratch copy of the config, so the case's detections come from the case's rules only.
     config_path: a config to start from (its other settings, e.g. engine.disabled_sids, are kept).
@@ -140,7 +154,7 @@ def run_case_ids(case_dir, rules=None, config_path=None, pcap_name: str = "input
                "--events-output", str(paths["events"]), "--flows-output", str(paths["flows"]),
                "--detections-output", str(paths["detections"]), "--rules-report", str(paths["rules_report"])]
         for rules_file in _resolve_rules(case_dir, rules):
-            cmd += ["--rules", str(rules_file)]
+            cmd += ["--rules", _cli_path(rules_file)]
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
     if check and proc.returncode != 0:
         raise RuntimeError(f"main.py exited with {proc.returncode}\n--- stderr ---\n{proc.stderr}")

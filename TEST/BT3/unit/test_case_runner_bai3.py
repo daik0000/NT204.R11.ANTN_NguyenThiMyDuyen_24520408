@@ -85,6 +85,13 @@ def test_two_runs_do_not_accumulate_and_give_the_same_result(case):
     assert first == second and len(second[2]) == 2
 
 
+def test_cli_path_is_relative_to_the_repository_root_when_inside_it(tmp_path):
+    assert cr._cli_path(cr.ROOT / "TEST" / "BT3" / "T01" / "rules.rules") == "TEST/BT3/T01/rules.rules"
+    assert cr._cli_path(str(cr.ROOT / "a.rules")) == "a.rules"
+    outside = tmp_path / "x.rules"
+    assert cr._cli_path(outside) == str(outside)
+
+
 def test_the_sample_rules_of_the_config_are_never_loaded(case):
     _, _, detections, report = cr.run_case_ids(case)
     assert {r["file"] for r in report} == {str(case / "rules.rules")}
