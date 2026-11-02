@@ -1,0 +1,5 @@
+# T13 - several rules match the same packet; the engine must not stop at the first
+alert tcp any any -> any 80 (msg:"T13 directory traversal"; content:"../"; sid:100001;)
+alert tcp any any -> any 80 (msg:"T13 passwd file"; content:"/etc/passwd"; sid:100002;)
+alert tcp any any -> any 80 (msg:"T13 data sent to the server on an established connection"; flow:to_server,established; dsize:>0; sid:100003;)
+alert tcp any any -> any 80 (msg:"T13 shadow file (not in the packet)"; content:"/etc/shadow"; sid:100004;)

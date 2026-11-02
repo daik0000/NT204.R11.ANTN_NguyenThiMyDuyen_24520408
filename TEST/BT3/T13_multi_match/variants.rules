@@ -1,0 +1,7 @@
+# T13 variants on the same session: a plain content, chained contents, the wrong flow role, a repeated content, nocase, a dsize that fails
+alert tcp any any -> any 80 (msg:"T13 v1 passwd"; content:"passwd"; sid:13101;)
+alert tcp any any -> any 80 (msg:"T13 v2 etc then passwd right after it"; content:"etc"; content:"passwd"; distance:1; sid:13102;)
+alert tcp any any -> any 80 (msg:"T13 v3 wrong flow role"; flow:to_client,established; content:"../"; sid:13103;)
+alert tcp any any -> any 80 (msg:"T13 v4 two traversals in a row"; content:"../"; content:"../"; distance:0; sid:13104;)
+alert tcp any any -> any 80 (msg:"T13 v5 HTTP version, nocase"; content:"http/1.1"; nocase; sid:13105;)
+alert tcp any any -> any 80 (msg:"T13 v6 payload over 1000 bytes"; dsize:>1000; content:"../"; sid:13106;)
