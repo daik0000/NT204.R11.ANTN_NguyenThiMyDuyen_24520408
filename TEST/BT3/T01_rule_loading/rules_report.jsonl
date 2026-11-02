@@ -1,0 +1,3 @@
+{"file": "TEST/BT3/T01_rule_loading/rules.rules", "line": 4, "status": "valid", "reason": null, "sid": 1001, "text": "alert tcp any any -> any 80 (msg:\"T01 rule 1001\"; content:\"GET\"; sid:1001;)"}
+{"file": "TEST/BT3/T01_rule_loading/rules.rules", "line": 9, "status": "valid", "reason": null, "sid": 1002, "text": "alert tcp any any -> any 80 (msg:\"T01 rule 1002\"; content:\"POST\"; sid:1002;)"}
+{"file": "TEST/BT3/T01_rule_loading/rules.rules", "line": 11, "status": "valid", "reason": null, "sid": 1003, "text": "alert udp any any -> any 53 (msg:\"T01 rule 1003\"; sid:1003;)"}

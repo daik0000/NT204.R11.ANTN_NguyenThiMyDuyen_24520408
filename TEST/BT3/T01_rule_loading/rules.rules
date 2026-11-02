@@ -1,0 +1,11 @@
+# T01 - rule loading: 2 comments, blanks, a commented-out rule and 3 real rules
+# the second real rule (sid 1002) is written on two lines with a backslash
+
+alert tcp any any -> any 80 (msg:"T01 rule 1001"; content:"GET"; sid:1001;)
+   # an indented comment
+
+    
+# alert tcp any any -> any 80 (msg:"T01 commented-out rule"; content:"never"; sid:1999;)
+alert tcp any any -> any 80 (msg:"T01 rule 1002"; \
+    content:"POST"; sid:1002;)
+alert udp any any -> any 53 (msg:"T01 rule 1003"; sid:1003;)

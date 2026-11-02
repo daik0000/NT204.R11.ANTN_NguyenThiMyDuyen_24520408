@@ -1,0 +1,5 @@
+# T04 variants: protocol ip, single ports written as ranges, /32, /0, the largest address and port
+alert ip any any -> any any (msg:"T04 variant ip any"; sid:4101;)
+alert tcp 192.168.1.77/32 80:80 -> 10.0.0.0/30 0:0 (msg:"T04 variant single-value ranges"; sid:4102;)
+alert tcp 0.0.0.0/0 0:65535 -> any any (msg:"T04 variant slash zero and full range"; sid:4103;)
+alert udp 172.16.0.0/12 any -> 255.255.255.255 65535 (msg:"T04 variant largest values"; sid:4104;)

@@ -1,0 +1,6 @@
+{"file": "TEST/BT3/T10_offset_depth/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 10001, "text": "alert udp any any -> any 9999 (msg:\"T10 CD, offset 2 depth 2\"; content:\"CD\"; offset:2; depth:2; sid:10001;)"}
+{"file": "TEST/BT3/T10_offset_depth/rules.rules", "line": 3, "status": "valid", "reason": null, "sid": 10002, "text": "alert udp any any -> any 9999 (msg:\"T10 CD, offset 3\"; content:\"CD\"; offset:3; sid:10002;)"}
+{"file": "TEST/BT3/T10_offset_depth/rules.rules", "line": 4, "status": "valid", "reason": null, "sid": 10003, "text": "alert udp any any -> any 9999 (msg:\"T10 CD, depth 3\"; content:\"CD\"; depth:3; sid:10003;)"}
+{"file": "TEST/BT3/T10_offset_depth/rules.rules", "line": 5, "status": "valid", "reason": null, "sid": 10004, "text": "alert udp any any -> any 9999 (msg:\"T10 CD, depth 4\"; content:\"CD\"; depth:4; sid:10004;)"}
+{"file": "TEST/BT3/T10_offset_depth/rules.rules", "line": 6, "status": "valid", "reason": null, "sid": 10005, "text": "alert udp any any -> any 9999 (msg:\"T10 J, offset 9\"; content:\"J\"; offset:9; sid:10005;)"}
+{"file": "TEST/BT3/T10_offset_depth/rules.rules", "line": 7, "status": "valid", "reason": null, "sid": 10006, "text": "alert udp any any -> any 9999 (msg:\"T10 J, offset 10\"; content:\"J\"; offset:10; sid:10006;)"}

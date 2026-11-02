@@ -1,0 +1,3 @@
+# variant of T01: the rule with sid 1002 is switched off
+engine:
+  disabled_sids: [1002]

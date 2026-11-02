@@ -1,0 +1,2 @@
+# T07 - header reject: a rule with a content, to see that packets rejected by the header never reach the content search
+alert tcp 10.0.0.5 any -> 192.168.1.20 80 (msg:"T07 GET from 10.0.0.5 to 192.168.1.20:80"; content:"GET"; sid:7001;)

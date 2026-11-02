@@ -1,0 +1,2 @@
+{"file": "TEST/BT3/T05_direction/variants.rules", "line": 2, "status": "valid", "reason": null, "sid": 5101, "text": "alert tcp 10.0.0.5 52133 -> 192.168.1.20 80 (msg:\"T05 variant one way, fixed ports\"; sid:5101;)"}
+{"file": "TEST/BT3/T05_direction/variants.rules", "line": 3, "status": "valid", "reason": null, "sid": 5102, "text": "alert tcp 10.0.0.5 52133 <> 192.168.1.20 80 (msg:\"T05 variant both ways, fixed ports\"; sid:5102;)"}

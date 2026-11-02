@@ -1,0 +1,7 @@
+{"file": "TEST/BT3/T06_indexer/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 6001, "text": "alert tcp any any -> any 80 (msg:\"T06 rule 1: tcp port 80\"; sid:6001;)"}
+{"file": "TEST/BT3/T06_indexer/rules.rules", "line": 3, "status": "valid", "reason": null, "sid": 6002, "text": "alert tcp any any -> any 1:1024 (msg:\"T06 rule 2: tcp ports 1-1024\"; sid:6002;)"}
+{"file": "TEST/BT3/T06_indexer/rules.rules", "line": 4, "status": "valid", "reason": null, "sid": 6003, "text": "alert tcp any any -> any any (msg:\"T06 rule 3: tcp any port\"; sid:6003;)"}
+{"file": "TEST/BT3/T06_indexer/rules.rules", "line": 5, "status": "valid", "reason": null, "sid": 6004, "text": "alert udp any any -> any 53 (msg:\"T06 rule 4: udp port 53\"; sid:6004;)"}
+{"file": "TEST/BT3/T06_indexer/rules.rules", "line": 6, "status": "valid", "reason": null, "sid": 6005, "text": "alert ip any any -> any any (msg:\"T06 rule 5: ip any\"; sid:6005;)"}
+{"file": "TEST/BT3/T06_indexer/rules.rules", "line": 7, "status": "valid", "reason": null, "sid": 6006, "text": "alert udp any any -> any 5000:6000 (msg:\"T06 rule 6: udp ports 5000-6000\"; sid:6006;)"}
+{"file": "TEST/BT3/T06_indexer/rules.rules", "line": 8, "status": "valid", "reason": null, "sid": 6007, "text": "alert tcp any 443 <> any 8443 (msg:\"T06 rule 7: tcp 443 both ways 8443\"; sid:6007;)"}

@@ -1,0 +1,3 @@
+{"file": "TEST/BT3/T14_detection_event/variants.rules", "line": 2, "status": "valid", "reason": null, "sid": 14101, "text": "alert tcp any any -> any 80 (msg:\"T14 v1 defaults\"; content:\"../\"; sid:14101;)"}
+{"file": "TEST/BT3/T14_detection_event/variants.rules", "line": 3, "status": "valid", "reason": null, "sid": 14102, "text": "alert udp any any -> any 53 (msg:\"T14 v2 dns query\"; sid:14102;)"}
+{"file": "TEST/BT3/T14_detection_event/variants.rules", "line": 4, "status": "valid", "reason": null, "sid": 14103, "text": "alert udp any any <> any 53 (msg:\"T14 v3 dns both ways\"; classtype:misc-activity; priority:2; sid:14103; rev:3;)"}

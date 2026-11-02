@@ -1,0 +1,11 @@
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 12001, "text": "alert tcp any any <> any 9003 (msg:\"T12 flags S exactly\"; flags:S; sid:12001;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 3, "status": "valid", "reason": null, "sid": 12002, "text": "alert tcp any any <> any 9003 (msg:\"T12 flags SA exactly\"; flags:SA; sid:12002;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 4, "status": "valid", "reason": null, "sid": 12003, "text": "alert tcp any any <> any 9003 (msg:\"T12 flags A exactly\"; flags:A; sid:12003;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 5, "status": "valid", "reason": null, "sid": 12004, "text": "alert tcp any any <> any 9003 (msg:\"T12 ACK set, others free\"; flags:A+; sid:12004;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 6, "status": "valid", "reason": null, "sid": 12005, "text": "alert tcp any any <> any 9003 (msg:\"T12 SYN or FIN set\"; flags:SF*; sid:12005;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 7, "status": "valid", "reason": null, "sid": 12006, "text": "alert tcp any any <> any 9003 (msg:\"T12 PSH+ACK with 10 bytes\"; flags:PA; dsize:10; sid:12006;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 8, "status": "valid", "reason": null, "sid": 12007, "text": "alert tcp any any <> any 9003 (msg:\"T12 empty payload\"; dsize:0; sid:12007;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 9, "status": "valid", "reason": null, "sid": 12008, "text": "alert tcp any any <> any 9003 (msg:\"T12 payload under 5 bytes\"; dsize:<5; sid:12008;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 10, "status": "valid", "reason": null, "sid": 12009, "text": "alert tcp any any <> any 9003 (msg:\"T12 payload of exactly 10 bytes\"; dsize:10; sid:12009;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 11, "status": "valid", "reason": null, "sid": 12010, "text": "alert tcp any any <> any 9003 (msg:\"T12 any payload\"; dsize:>0; sid:12010;)"}
+{"file": "TEST/BT3/T12_flags_dsize/rules.rules", "line": 12, "status": "valid", "reason": null, "sid": 12011, "text": "alert tcp any any <> any 9003 (msg:\"T12 payload from 5 to 15 bytes\"; dsize:5<>15; sid:12011;)"}

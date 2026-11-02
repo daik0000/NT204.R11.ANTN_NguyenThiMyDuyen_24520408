@@ -1,0 +1,3 @@
+# T05 - direction: the same header written with -> (sid 5001) and <> (sid 5002); no content, no other option
+alert tcp 10.0.0.5 any -> 192.168.1.20 80 (msg:"T05 one way"; sid:5001;)
+alert tcp 10.0.0.5 any <> 192.168.1.20 80 (msg:"T05 both ways"; sid:5002;)

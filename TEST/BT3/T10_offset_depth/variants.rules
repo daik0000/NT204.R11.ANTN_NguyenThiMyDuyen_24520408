@@ -1,0 +1,9 @@
+# T10 variants against the same payload: window edges, an explicit offset 0, and an offset past the end
+alert udp any any -> any 9999 (msg:"T10 variant A, depth 1"; content:"A"; depth:1; sid:10101;)
+alert udp any any -> any 9999 (msg:"T10 variant IJ, offset 8 depth 2"; content:"IJ"; offset:8; depth:2; sid:10102;)
+alert udp any any -> any 9999 (msg:"T10 variant IJ, offset 7 depth 2"; content:"IJ"; offset:7; depth:2; sid:10103;)
+alert udp any any -> any 9999 (msg:"T10 variant CD, offset 0 depth 4"; content:"CD"; offset:0; depth:4; sid:10104;)
+alert udp any any -> any 9999 (msg:"T10 variant EF, offset 4 depth 2"; content:"EF"; offset:4; depth:2; sid:10105;)
+alert udp any any -> any 9999 (msg:"T10 variant EF, offset 5"; content:"EF"; offset:5; sid:10106;)
+alert udp any any -> any 9999 (msg:"T10 variant J, offset 20 (past the end)"; content:"J"; offset:20; sid:10107;)
+alert udp any any -> any 9999 (msg:"T10 variant A, explicit offset 0"; content:"A"; offset:0; sid:10108;)

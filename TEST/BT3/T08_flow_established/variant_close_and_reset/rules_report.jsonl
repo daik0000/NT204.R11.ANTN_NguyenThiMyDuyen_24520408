@@ -1,0 +1,3 @@
+{"file": "TEST/BT3/T08_flow_established/variants.rules", "line": 2, "status": "valid", "reason": null, "sid": 8101, "text": "alert tcp any any -> any any (msg:\"T08 variant FIN/ACK while closing or closed\"; flow:established; flags:FA; sid:8101;)"}
+{"file": "TEST/BT3/T08_flow_established/variants.rules", "line": 3, "status": "valid", "reason": null, "sid": 8102, "text": "alert tcp any any -> any any (msg:\"T08 variant RST/ACK resets the flow\"; flow:not_established; flags:RA; sid:8102;)"}
+{"file": "TEST/BT3/T08_flow_established/variants.rules", "line": 4, "status": "valid", "reason": null, "sid": 8103, "text": "alert tcp any any -> any any (msg:\"T08 variant from_client alias\"; flow:from_client,established; flags:A; sid:8103;)"}

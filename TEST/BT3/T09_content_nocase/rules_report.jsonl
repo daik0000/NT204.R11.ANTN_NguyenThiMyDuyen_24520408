@@ -1,0 +1,5 @@
+{"file": "TEST/BT3/T09_content_nocase/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 9001, "text": "alert tcp any any -> any 80 (msg:\"T09 admin, case sensitive\"; content:\"admin\"; sid:9001;)"}
+{"file": "TEST/BT3/T09_content_nocase/rules.rules", "line": 3, "status": "valid", "reason": null, "sid": 9002, "text": "alert tcp any any -> any 80 (msg:\"T09 admin with nocase\"; content:\"admin\"; nocase; sid:9002;)"}
+{"file": "TEST/BT3/T09_content_nocase/rules.rules", "line": 4, "status": "valid", "reason": null, "sid": 9003, "text": "alert tcp any any -> any 80 (msg:\"T09 Admin, same case as the packet\"; content:\"Admin\"; sid:9003;)"}
+{"file": "TEST/BT3/T09_content_nocase/rules.rules", "line": 5, "status": "valid", "reason": null, "sid": 9004, "text": "alert tcp any any -> any 80 (msg:\"T09 GET written in hex\"; content:\"|47 45 54|\"; sid:9004;)"}
+{"file": "TEST/BT3/T09_content_nocase/rules.rules", "line": 6, "status": "valid", "reason": null, "sid": 9005, "text": "alert tcp any any -> any 80 (msg:\"T09 GET as text and hex, nocase\"; content:\"GE|54|\"; nocase; sid:9005;)"}

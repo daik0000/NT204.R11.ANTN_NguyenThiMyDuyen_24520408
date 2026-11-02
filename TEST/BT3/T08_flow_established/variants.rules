@@ -1,0 +1,4 @@
+# T08 variant: the states after a close and after a reset, and the from_client alias
+alert tcp any any -> any any (msg:"T08 variant FIN/ACK while closing or closed"; flow:established; flags:FA; sid:8101;)
+alert tcp any any -> any any (msg:"T08 variant RST/ACK resets the flow"; flow:not_established; flags:RA; sid:8102;)
+alert tcp any any -> any any (msg:"T08 variant from_client alias"; flow:from_client,established; flags:A; sid:8103;)

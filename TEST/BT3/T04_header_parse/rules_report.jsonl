@@ -1,0 +1,8 @@
+{"file": "TEST/BT3/T04_header_parse/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 4001, "text": "alert tcp any any -> any 80 (msg:\"T04 any to port 80\"; sid:4001;)"}
+{"file": "TEST/BT3/T04_header_parse/rules.rules", "line": 3, "status": "valid", "reason": null, "sid": 4002, "text": "alert tcp 10.0.0.5 any -> 192.168.1.0/24 1:1024 (msg:\"T04 host to subnet\"; sid:4002;)"}
+{"file": "TEST/BT3/T04_header_parse/rules.rules", "line": 4, "status": "valid", "reason": null, "sid": 4003, "text": "alert udp 10.0.0.0/8 :1023 -> any 5000: (msg:\"T04 udp port ranges\"; sid:4003;)"}
+{"file": "TEST/BT3/T04_header_parse/rules.rules", "line": 5, "status": "valid", "reason": null, "sid": 4004, "text": "alert tcp 10.0.0.5/24 any <> any any (msg:\"T04 host bits and both directions\"; sid:4004;)"}
+{"file": "TEST/BT3/T04_header_parse/variants.rules", "line": 2, "status": "valid", "reason": null, "sid": 4101, "text": "alert ip any any -> any any (msg:\"T04 variant ip any\"; sid:4101;)"}
+{"file": "TEST/BT3/T04_header_parse/variants.rules", "line": 3, "status": "valid", "reason": null, "sid": 4102, "text": "alert tcp 192.168.1.77/32 80:80 -> 10.0.0.0/30 0:0 (msg:\"T04 variant single-value ranges\"; sid:4102;)"}
+{"file": "TEST/BT3/T04_header_parse/variants.rules", "line": 4, "status": "valid", "reason": null, "sid": 4103, "text": "alert tcp 0.0.0.0/0 0:65535 -> any any (msg:\"T04 variant slash zero and full range\"; sid:4103;)"}
+{"file": "TEST/BT3/T04_header_parse/variants.rules", "line": 5, "status": "valid", "reason": null, "sid": 4104, "text": "alert udp 172.16.0.0/12 any -> 255.255.255.255 65535 (msg:\"T04 variant largest values\"; sid:4104;)"}

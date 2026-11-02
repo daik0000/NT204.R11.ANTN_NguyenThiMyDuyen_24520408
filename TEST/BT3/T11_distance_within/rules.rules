@@ -1,0 +1,5 @@
+# T11 - distance / within. Rules 11001-11003 are for the packet to port 9001 (AAA-BBB-CCC-BBB), rule 11004 for the packet to port 9002 (BBB----BBB-CCC)
+alert tcp any any -> any 9001 (msg:"T11 rule 1: BBB 1 byte after AAA, within 3"; content:"AAA"; content:"BBB"; distance:1; within:3; sid:11001;)
+alert tcp any any -> any 9001 (msg:"T11 rule 2: CCC 1 byte after AAA, within 3"; content:"AAA"; content:"CCC"; distance:1; within:3; sid:11002;)
+alert tcp any any -> any 9001 (msg:"T11 rule 3: a second BBB after the first"; content:"BBB"; content:"BBB"; distance:1; sid:11003;)
+alert tcp any any -> any 9002 (msg:"T11 rule 4: backtracking, BBB then CCC within 3"; content:"BBB"; content:"CCC"; distance:1; within:3; sid:11004;)

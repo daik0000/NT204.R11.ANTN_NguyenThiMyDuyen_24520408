@@ -1,0 +1,4 @@
+{"file": "TEST/BT3/T13_multi_match/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 100001, "text": "alert tcp any any -> any 80 (msg:\"T13 directory traversal\"; content:\"../\"; sid:100001;)"}
+{"file": "TEST/BT3/T13_multi_match/rules.rules", "line": 3, "status": "valid", "reason": null, "sid": 100002, "text": "alert tcp any any -> any 80 (msg:\"T13 passwd file\"; content:\"/etc/passwd\"; sid:100002;)"}
+{"file": "TEST/BT3/T13_multi_match/rules.rules", "line": 4, "status": "valid", "reason": null, "sid": 100003, "text": "alert tcp any any -> any 80 (msg:\"T13 data sent to the server on an established connection\"; flow:to_server,established; dsize:>0; sid:100003;)"}
+{"file": "TEST/BT3/T13_multi_match/rules.rules", "line": 5, "status": "valid", "reason": null, "sid": 100004, "text": "alert tcp any any -> any 80 (msg:\"T13 shadow file (not in the packet)\"; content:\"/etc/shadow\"; sid:100004;)"}

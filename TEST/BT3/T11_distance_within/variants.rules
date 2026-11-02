@@ -1,0 +1,11 @@
+# T11 variants: within without distance, a negative distance, three contents, a window one byte too small
+alert tcp any any -> any 9001 (msg:"T11 v1 within 4, no distance"; content:"AAA"; content:"BBB"; within:4; sid:11101;)
+alert tcp any any -> any 9001 (msg:"T11 v2 within 3, no distance"; content:"AAA"; content:"BBB"; within:3; sid:11102;)
+alert tcp any any -> any 9001 (msg:"T11 v3 second BBB right after the first"; content:"BBB"; content:"BBB"; distance:0; sid:11103;)
+alert tcp any any -> any 9001 (msg:"T11 v4 negative distance reaches back"; content:"BBB"; content:"BBB"; distance:-3; sid:11104;)
+alert tcp any any -> any 9001 (msg:"T11 v5 AAA does not come after CCC"; content:"CCC"; content:"AAA"; distance:0; sid:11105;)
+alert tcp any any -> any 9001 (msg:"T11 v6 CCC ends one byte past the window"; content:"AAA"; content:"CCC"; distance:4; within:3; sid:11106;)
+alert tcp any any -> any 9001 (msg:"T11 v7 the same with within 4"; content:"AAA"; content:"CCC"; distance:4; within:4; sid:11107;)
+alert tcp any any -> any 9002 (msg:"T11 v8 CCC after BBB, no within: the first BBB works"; content:"BBB"; content:"CCC"; distance:1; sid:11108;)
+alert tcp any any -> any 9002 (msg:"T11 v9 backtracking is not enough, CCC ends past the window"; content:"BBB"; content:"CCC"; within:3; sid:11109;)
+alert tcp any any -> any 9002 (msg:"T11 v10 three contents, backtracking on the second"; content:"BBB"; content:"BBB"; distance:1; content:"CCC"; distance:1; within:3; sid:11110;)
