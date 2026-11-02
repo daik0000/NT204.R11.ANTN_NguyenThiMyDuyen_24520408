@@ -1,0 +1,5 @@
+# T04 - header parsing: four header-only rules (no content, no other option)
+alert tcp any any -> any 80 (msg:"T04 any to port 80"; sid:4001;)
+alert tcp 10.0.0.5 any -> 192.168.1.0/24 1:1024 (msg:"T04 host to subnet"; sid:4002;)
+alert udp 10.0.0.0/8 :1023 -> any 5000: (msg:"T04 udp port ranges"; sid:4003;)
+alert tcp 10.0.0.5/24 any <> any any (msg:"T04 host bits and both directions"; sid:4004;)
