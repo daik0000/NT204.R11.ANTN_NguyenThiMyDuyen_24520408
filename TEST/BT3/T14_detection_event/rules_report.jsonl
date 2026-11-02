@@ -1,0 +1,1 @@
+{"file": "TEST/BT3/T14_detection_event/rules.rules", "line": 2, "status": "valid", "reason": null, "sid": 100001, "text": "alert tcp any any -> any 80 (msg:\"Directory traversal detected\"; flow:to_server,established; content:\"../\"; classtype:web-application-attack; priority:1; sid:100001; rev:1;)"}

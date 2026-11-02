@@ -1,0 +1,4 @@
+# T14 variants: the defaults when a rule omits classtype / priority / rev, and a UDP detection
+alert tcp any any -> any 80 (msg:"T14 v1 defaults"; content:"../"; sid:14101;)
+alert udp any any -> any 53 (msg:"T14 v2 dns query"; sid:14102;)
+alert udp any any <> any 53 (msg:"T14 v3 dns both ways"; classtype:misc-activity; priority:2; sid:14103; rev:3;)
